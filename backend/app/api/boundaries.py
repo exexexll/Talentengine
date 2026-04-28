@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import logging
 import math
+import os
 import urllib.parse
 import urllib.request
 from pathlib import Path
@@ -153,7 +154,17 @@ def _make_district_geoid(state_id: str, district_name: str) -> str:
 
 
 def _load_or_build(cache_name: str, builder: Any) -> dict[str, Any]:
-    """Load from disk cache or build and save."""
+    """Load from disk cache or (optionally) rebuild from upstream.
+
+    On small production boxes (2 GB Droplet) rebuilding the US-places
+    cache is dangerous: ``_build_us_places_geojson`` issues hundreds of
+    Census TIGERweb requests, parses ~220 MB of GeoJSON, and can OOM the
+    process — taking the entire API down with it.  Set
+    ``FIGWORK_BOUNDARY_AUTOBUILD=0`` (the default in production) to skip
+    rebuild entirely and return an empty FeatureCollection when the
+    cache is missing.  The frontend renders a flat map without crashing,
+    and the operator can ``scp`` the cache file in at their convenience.
+    """
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
     cache_file = CACHE_DIR / f"{cache_name}.json"
     if cache_file.exists():
@@ -164,8 +175,19 @@ def _load_or_build(cache_name: str, builder: Any) -> dict[str, Any]:
         except (json.JSONDecodeError, OSError):
             pass
 
+    autobuild = os.getenv("FIGWORK_BOUNDARY_AUTOBUILD", "1").strip().lower() in ("1", "true", "yes", "on")
+    if not autobuild:
+        logger.warning(
+            "[Boundaries] cache miss for %s and FIGWORK_BOUNDARY_AUTOBUILD=0 — returning empty FeatureCollection",
+            cache_name,
+        )
+        return {"type": "FeatureCollection", "features": []}
+
     data = builder()
-    cache_file.write_text(json.dumps(data), encoding="utf-8")
+    try:
+        cache_file.write_text(json.dumps(data), encoding="utf-8")
+    except OSError as exc:
+        logger.warning("[Boundaries] could not persist cache %s: %s", cache_name, exc)
     return data
 
 
