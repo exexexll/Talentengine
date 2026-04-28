@@ -10,3 +10,4 @@ services:
       - .env
     volumes:
       - ./data_pipeline/artifacts:/app/data_pipeline/artifacts:ro
+      - ./backend/data/boundary_cache:/app/backend/data/boundary_cache:ro

@@ -20,3 +20,10 @@ services:
     #   rsync -av data_pipeline/artifacts/ root@droplet:/opt/figwork/data_pipeline/artifacts/
     volumes:
       - ./data_pipeline/artifacts:/app/data_pipeline/artifacts:ro
+      # `us_places_v1.json` is ~220 MB (over GitHub's 100 MB push limit) so it
+      # is .gitignored.  rsync the file from a workstation:
+      #   scp backend/data/boundary_cache/us_places_v1.json \
+      #       root@droplet:/opt/figwork/backend/data/boundary_cache/
+      # Without this mount, `/api/boundaries/us_places` will try to rebuild
+      # from Census TIGERweb (~90s, sometimes 500s on a small Droplet).
+      - ./backend/data/boundary_cache:/app/backend/data/boundary_cache:ro
