@@ -6,3 +6,4 @@ redis>=5.0.0
 prefect>=3.0.0
 bcrypt>=4.2.0
 itsdangerous>=2.2.0
+openai>=1.40.0
