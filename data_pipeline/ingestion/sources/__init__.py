@@ -6,6 +6,7 @@ from data_pipeline.ingestion.sources.bea_gdp import BEAGDPConnector
 from data_pipeline.ingestion.sources.bea_rpp import BEARPPConnector
 from data_pipeline.ingestion.sources.cbp_zbp import CBPZBPConnector
 from data_pipeline.ingestion.sources.college_scorecard import CollegeScorecardConnector
+from data_pipeline.ingestion.sources.fcc_broadband import FCCBroadbandConnector
 from data_pipeline.ingestion.sources.ipeds import IPEDSConnector
 from data_pipeline.ingestion.sources.irs_migration import IRSMigrationConnector
 from data_pipeline.ingestion.sources.laus import LAUSConnector
@@ -38,6 +39,7 @@ PHASE3_EXPANSION_CONNECTORS = [
     CollegeScorecardConnector,
     ONETConnector,
     RUCARUCCConnector,
+    FCCBroadbandConnector,
 ]
 
 GLOBAL_CONNECTORS = [
