@@ -4,6 +4,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from starlette.staticfiles import StaticFiles
 
@@ -53,6 +54,11 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+# `/api/boundaries/us_places` returns ~218 MB of GeoJSON; gzip is essential
+# on a 2 GB Droplet's small upstream pipe.  Geo coordinates compress to
+# roughly 12-18% of source, so the wire payload drops to ~30-40 MB and the
+# initial map paint goes from 30-60 s to 5-10 s.
+app.add_middleware(GZipMiddleware, minimum_size=1024, compresslevel=6)
 _hosts = os.getenv("FIGWORK_TRUSTED_HOSTS", "").strip()
 if _hosts:
     app.add_middleware(
