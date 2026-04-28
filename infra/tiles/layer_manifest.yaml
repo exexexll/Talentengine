@@ -1,0 +1,34 @@
+version: 1
+description: Zoom-adaptive layer manifest for map rendering.
+
+layers:
+  - id: opportunity_state
+    geometry: state
+    min_zoom: 3
+    max_zoom: 6
+    source_metric: regional_opportunity_score
+    style: choropleth
+  - id: county_supply_demand
+    geometry: county
+    min_zoom: 6
+    max_zoom: 9
+    source_metric: talent_supply
+    style: choropleth
+  - id: metro_industry_bubbles
+    geometry: metro
+    min_zoom: 7
+    max_zoom: 10
+    source_metric: business_demand
+    style: bubble
+  - id: zip_overlay
+    geometry: zcta
+    min_zoom: 9
+    max_zoom: 12
+    source_metric: business_establishments
+    style: fill
+  - id: tract_overlay
+    geometry: tract
+    min_zoom: 10
+    max_zoom: 13
+    source_metric: broadband_readiness
+    style: fill

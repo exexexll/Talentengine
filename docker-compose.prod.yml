@@ -1,0 +1,22 @@
+# Merge with base:
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+#
+# Loads `deploy/digitalocean/env.defaults` (committed safe defaults), then
+# optionally merges `.env` from the project root when present (Compose 2.24+).
+# Older Compose: `touch .env` (empty file) or upgrade Docker Desktop / docker-ce.
+
+services:
+  figwork:
+    env_file:
+      - deploy/digitalocean/env.defaults
+      - path: .env
+        required: false
+    # Precomputed map metrics/scores live outside the image (~700 MB).
+    # The host repo's `data_pipeline/artifacts` is bind-mounted **read-only** so
+    # the API can serve them without rebuilding the image when the pipeline
+    # produces a new run.  If you do not have artifacts on the server yet, run
+    # the data pipeline once (see docs/runbooks/data-refresh.md) or copy the
+    # latest run from a workstation:
+    #   rsync -av data_pipeline/artifacts/ root@droplet:/opt/figwork/data_pipeline/artifacts/
+    volumes:
+      - ./data_pipeline/artifacts:/app/data_pipeline/artifacts:ro

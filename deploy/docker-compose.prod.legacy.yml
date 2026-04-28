@@ -1,0 +1,12 @@
+# For Docker Compose **< 2.24** (no `required: false` on `env_file` entries).
+#
+#   cp deploy/digitalocean/env.defaults .env
+#   nano .env
+#   docker compose -f docker-compose.yml -f deploy/docker-compose.prod.legacy.yml up -d --build
+#
+services:
+  figwork:
+    env_file:
+      - .env
+    volumes:
+      - ./data_pipeline/artifacts:/app/data_pipeline/artifacts:ro

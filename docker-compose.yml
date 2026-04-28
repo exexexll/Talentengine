@@ -1,0 +1,27 @@
+# Base stack: API + SPA on :8080, SQLite on a Docker volume.
+#
+# Quick local run (no auth, open CORS for localhost):
+#   docker compose up -d --build
+#   open http://localhost:8080
+#
+# Production (secrets + internal login): use the prod overlay:
+#   cp deploy/digitalocean/env.example .env
+#   nano .env
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+#
+services:
+  figwork:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      FRONTEND_DIST: /app/frontend_dist
+      WORKTRIGGER_DB_PATH: /data/worktrigger.sqlite3
+      FIGWORK_AUTH_ENABLED: "0"
+      FIGWORK_ALLOWED_ORIGINS: "http://127.0.0.1:8080,http://localhost:8080,http://localhost:3000,http://localhost:8000"
+    volumes:
+      - figwork_data:/data
+    restart: unless-stopped
+
+volumes:
+  figwork_data:

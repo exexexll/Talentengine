@@ -1,0 +1,9 @@
+# Example Caddy v2 site — copy to /etc/caddy/Caddyfile on a Droplet and adjust the domain.
+# Install: https://caddyserver.com/docs/install#debian-ubuntu-debian
+#
+# After `docker compose up`, the app listens on 127.0.0.1:8080.
+
+app.example.com {
+	encode gzip zstd
+	reverse_proxy 127.0.0.1:8080
+}

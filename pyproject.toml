@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "figwork-geographic-intelligence-engine"
+version = "0.1.0"
+description = "Geographic decision engine for Figwork."
+requires-python = ">=3.11"
+dependencies = [
+  "fastapi>=0.115.0",
+  "uvicorn>=0.30.0",
+  "pydantic>=2.8.0",
+  "httpx>=0.27.0",
+  "redis>=5.0.0",
+  "prefect>=3.0.0",
+  "bcrypt>=4.2.0",
+  "itsdangerous>=2.2.0",
+]
+
+[tool.setuptools]
+packages = ["backend", "backend.app", "backend.app.api", "backend.app.models", "backend.app.services", "data_pipeline", "data_pipeline.ingestion", "data_pipeline.ingestion.sources", "data_pipeline.transforms", "data_pipeline.qa", "data_pipeline.scoring", "data_pipeline.orchestration"]
