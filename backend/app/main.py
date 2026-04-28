@@ -2,10 +2,12 @@ import logging
 import os
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
+from fastapi.responses import FileResponse, JSONResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.staticfiles import StaticFiles
 
 from backend.app.api import (
@@ -126,5 +128,31 @@ def _validate_deployment_auth() -> None:
 
 
 _static_dir = os.getenv("FRONTEND_DIST", "").strip()
+_index_html = Path(_static_dir) / "index.html" if _static_dir else None
+
 if _static_dir and Path(_static_dir).is_dir():
     app.mount("/", StaticFiles(directory=_static_dir, html=True), name="frontend")
+
+
+@app.exception_handler(StarletteHTTPException)
+async def spa_fallback(request: Request, exc: StarletteHTTPException) -> JSONResponse | FileResponse:
+    """Serve ``index.html`` for any 404 that looks like a client-side route.
+
+    Without this, refreshing on ``/sdr`` or ``/worktrigger/analytics`` would
+    return ``{"detail":"Not Found"}`` because ``StaticFiles`` only knows
+    about real files.  We only fall back when the path:
+
+    1. Is a 404, AND
+    2. Does NOT start with ``/api`` (those are real API errors), AND
+    3. Has no file extension (so ``/assets/foo-XYZ.js`` keeps a real 404
+       and the browser doesn't load HTML where JS is expected).
+    """
+    path = request.url.path
+    is_spa_route = (
+        exc.status_code == 404
+        and not path.startswith("/api")
+        and "." not in path.rsplit("/", 1)[-1]
+    )
+    if is_spa_route and _index_html and _index_html.is_file():
+        return FileResponse(str(_index_html))
+    return JSONResponse({"detail": exc.detail}, status_code=exc.status_code)
