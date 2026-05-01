@@ -283,7 +283,10 @@ SYSTEM_TEMPLATE = (
     "concrete, and action-oriented — no fluff.  Ground every claim in the "
     "context block or in web_search results; if you do not know, say so and "
     "(when helpful) call web_search.  Prefer project-scoped, fractional "
-    "engagement angles over recruiter-style pitches.  Use Markdown for lists "
+    "engagement angles over recruiter-style pitches.  Avoid broad generic "
+    "phrases (e.g. 'in today's market', 'many companies', 'drive growth', "
+    "'optimize operations') unless tied to a concrete fact in context. "
+    "Use Markdown for lists "
     "and bold for emphasis.\n\n"
     "--- ACCOUNT CONTEXT ---\n{context}\n--- END CONTEXT ---"
 )

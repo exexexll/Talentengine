@@ -60,5 +60,10 @@ def grounding_preamble() -> str:
         f"Current date: {current_date_str()}. "
         f"You are operating inside Figwork, an SDR prospecting platform. "
         f"Use the current date when reasoning about 'recent', 'last year', "
-        f"or 'this quarter'."
+        f"or 'this quarter'. "
+        f"Style rules for all analysis: be concrete, evidence-led, and specific to "
+        f"the provided company/geography context; avoid broad generic wording. "
+        f"Do not use vague filler phrases like 'in today's landscape', "
+        f"'across industries', 'many companies', or 'likely to'. "
+        f"Every key claim must be tied to an explicit observed signal, metric, or source."
     )

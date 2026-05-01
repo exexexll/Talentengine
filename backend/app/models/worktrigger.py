@@ -120,11 +120,33 @@ class DraftGenerateRequest(BaseModel):
     contact_id: str
     work_hypothesis_id: str
     channel: Literal["email", "linkedin"] = "email"
+    template_id: str | None = None
 
 
 class DraftGenerateResponse(BaseModel):
     draft_id: str
     status: DraftStatus
+
+
+class EmailTemplateCreateRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    subject_a: str = Field(min_length=1, max_length=240)
+    subject_b: str = Field(default="", max_length=240)
+    email_body: str = Field(min_length=1, max_length=8000)
+    followup_body: str = Field(default="", max_length=4000)
+    linkedin_dm: str = Field(default="", max_length=2000)
+
+
+class EmailTemplateResponse(BaseModel):
+    id: str
+    name: str
+    subject_a: str
+    subject_b: str
+    email_body: str
+    followup_body: str
+    linkedin_dm: str
+    created_at: datetime
+    updated_at: datetime
 
 
 class ReviewRequest(BaseModel):

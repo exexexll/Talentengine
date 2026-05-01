@@ -22,6 +22,7 @@ import httpx
 
 _SOCIAL_CACHE_DIR = Path("backend/data/social_signals_cache")
 _SOCIAL_CACHE_TTL = 24 * 60 * 60  # 24 hours — social data is slow-moving
+_SOCIAL_PROMPT_VERSION = "v2-anti-generic"
 
 
 def _norm_url_for_cache(u: str) -> str:
@@ -56,6 +57,8 @@ def _cache_load(domain: str, linkedin_url: str = "", twitter_url: str = "") -> d
     try:
         data = json.loads(p.read_text(encoding="utf-8"))
         ts = float(data.get("_cached_at", 0))
+        if data.get("_prompt_version") != _SOCIAL_PROMPT_VERSION:
+            return None
         if time.time() - ts < _SOCIAL_CACHE_TTL:
             data["_cache_hit"] = True
             return data
@@ -75,6 +78,7 @@ def _cache_save(
         p = _cache_path(domain, linkedin_url, twitter_url)
         body = dict(payload)
         body["_cached_at"] = time.time()
+        body["_prompt_version"] = _SOCIAL_PROMPT_VERSION
         p.write_text(json.dumps(body), encoding="utf-8")
     except OSError:
         pass
@@ -474,6 +478,12 @@ Extract structured business signals that indicate:
 3. Pain points or challenges mentioned
 4. Key departments hiring (engineering, sales, marketing, ops, etc.)
 5. Overall company momentum (accelerating/steady/slowing/restructuring)
+
+Quality bar:
+- No broad generic wording. Avoid phrases like "company appears strong" or "shows positive momentum" unless tied to specific evidence.
+- Each signal description must reference a concrete observed detail (role title, team, initiative, product, location, date cue, or quoted phrase).
+- If evidence is weak, return fewer signals instead of vague signals.
+- Outreach angle must name one concrete trigger from the evidence.
 
 Social data:
 {combined}

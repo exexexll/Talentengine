@@ -13,6 +13,8 @@ from backend.app.models.worktrigger import (
     ContactEnrichResponse,
     DraftGenerateRequest,
     DraftGenerateResponse,
+    EmailTemplateCreateRequest,
+    EmailTemplateResponse,
     JobEnqueueRequest,
     JobRecordResponse,
     ReplyClassifyRequest,
@@ -202,10 +204,39 @@ def generate_draft(request: DraftGenerateRequest) -> DraftGenerateResponse:
             contact_id=request.contact_id,
             work_hypothesis_id=request.work_hypothesis_id,
             channel=request.channel,
+            template_id=request.template_id,
         )
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return DraftGenerateResponse(draft_id=draft_id, status="draft_ready")
+
+
+@router.get("/templates/email", response_model=list[EmailTemplateResponse])
+def list_email_templates(limit: int = 200) -> list[EmailTemplateResponse]:
+    rows = _store.list_email_templates(limit=limit)
+    return [EmailTemplateResponse(**row) for row in rows]
+
+
+@router.post("/templates/email", response_model=EmailTemplateResponse)
+def create_email_template(request: EmailTemplateCreateRequest) -> EmailTemplateResponse:
+    template_id = _store.create_email_template(
+        name=request.name,
+        subject_a=request.subject_a,
+        subject_b=request.subject_b,
+        email_body=request.email_body,
+        followup_body=request.followup_body,
+        linkedin_dm=request.linkedin_dm,
+    )
+    return EmailTemplateResponse(**_store.get_email_template(template_id))
+
+
+@router.delete("/templates/email/{template_id}")
+def delete_email_template(template_id: str) -> dict[str, str]:
+    try:
+        _store.delete_email_template(template_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {"template_id": template_id, "status": "deleted"}
 
 
 @router.get("/drafts/{draft_id}")

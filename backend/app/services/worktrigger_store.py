@@ -206,6 +206,19 @@ class WorkTriggerStore:
                 );
                 CREATE INDEX IF NOT EXISTS idx_wt_drafts_status ON wt_outreach_drafts(status);
 
+                CREATE TABLE IF NOT EXISTS wt_email_templates (
+                    id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    subject_a TEXT NOT NULL,
+                    subject_b TEXT NOT NULL DEFAULT '',
+                    email_body TEXT NOT NULL,
+                    followup_body TEXT NOT NULL DEFAULT '',
+                    linkedin_dm TEXT NOT NULL DEFAULT '',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_wt_email_templates_updated ON wt_email_templates(updated_at DESC);
+
                 CREATE TABLE IF NOT EXISTS wt_review_decisions (
                     id TEXT PRIMARY KEY,
                     draft_id TEXT NOT NULL REFERENCES wt_outreach_drafts(id) ON DELETE CASCADE,
@@ -1298,6 +1311,73 @@ class WorkTriggerStore:
         values = list(updates.values()) + [draft_id]
         with self._lock, self._conn() as conn:
             conn.execute(f"UPDATE wt_outreach_drafts SET {assignments} WHERE id = ?", values)
+
+    def create_email_template(
+        self,
+        *,
+        name: str,
+        subject_a: str,
+        subject_b: str,
+        email_body: str,
+        followup_body: str,
+        linkedin_dm: str,
+    ) -> str:
+        template_id = f"tpl_{uuid4().hex}"
+        now = _utc_now()
+        with self._lock, self._conn() as conn:
+            conn.execute(
+                """
+                INSERT INTO wt_email_templates (
+                    id, name, subject_a, subject_b, email_body, followup_body, linkedin_dm, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    template_id,
+                    name.strip(),
+                    subject_a.strip(),
+                    subject_b.strip(),
+                    email_body.strip(),
+                    followup_body.strip(),
+                    linkedin_dm.strip(),
+                    now,
+                    now,
+                ),
+            )
+        return template_id
+
+    def list_email_templates(self, *, limit: int = 200) -> list[dict[str, Any]]:
+        with self._lock, self._conn() as conn:
+            rows = conn.execute(
+                """
+                SELECT id, name, subject_a, subject_b, email_body, followup_body, linkedin_dm, created_at, updated_at
+                FROM wt_email_templates
+                ORDER BY updated_at DESC
+                LIMIT ?
+                """,
+                (max(1, min(1000, limit)),),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_email_template(self, template_id: str) -> dict[str, Any]:
+        with self._lock, self._conn() as conn:
+            row = conn.execute(
+                """
+                SELECT id, name, subject_a, subject_b, email_body, followup_body, linkedin_dm, created_at, updated_at
+                FROM wt_email_templates
+                WHERE id = ?
+                """,
+                (template_id,),
+            ).fetchone()
+            if row is None:
+                raise KeyError(f"Unknown template_id={template_id}")
+        return dict(row)
+
+    def delete_email_template(self, template_id: str) -> None:
+        with self._lock, self._conn() as conn:
+            row = conn.execute("SELECT id FROM wt_email_templates WHERE id = ?", (template_id,)).fetchone()
+            if row is None:
+                raise KeyError(f"Unknown template_id={template_id}")
+            conn.execute("DELETE FROM wt_email_templates WHERE id = ?", (template_id,))
 
     def list_drafts_for_account(
         self,

@@ -84,7 +84,7 @@ IN_STATE_NAMES_TO_ID["Uttaranchal"] = "UK"
 CACHE_DIR = Path("backend/data/ai_research_cache")
 NAME_CACHE_FILE = Path("backend/data/geography_names.json")
 CACHE_TTL_SECONDS = 86400 * 7
-AI_PROMPT_VERSION = "v3-score-aligned"
+AI_PROMPT_VERSION = "v4-anti-generic"
 
 _name_cache: dict[str, str] = {}
 _boundary_names: dict[str, str] = {}
@@ -514,6 +514,8 @@ Rules:
 - {extra_instruction}
 - Do NOT fabricate employer names you aren't confident about. But DO estimate workforce shares.
 - NEVER write filler like "No recent coverage found" — just skip it.
+- Ban generic phrasing. Avoid broad claims like "strong ecosystem", "well-positioned", "in today's market", or "across many sectors" unless immediately backed by a concrete local fact.
+- Every industry bullet must include at least one concrete local detail (named employer, role title, expansion/layoff event, or numeric indicator).
 - Neutral, direct tone. No promotional language.
 - Calibrate your tone to internal metrics: if internal demand/supply/opportunity signals are weak, the bottom line must be cautious (Pilot/Monitor/Avoid), not optimistic.
 - If web news appears positive but internal metrics are weak (or vice versa), explicitly call out the divergence in one bullet.
@@ -809,7 +811,9 @@ def _metrics_only_synthesis(
         f"Write a concise intelligence brief using ONLY bullet points. Cover: key metrics summary, "
         f"likely top industries (based on your knowledge of this area), operating conditions, "
         f"and a short assessment (Demand/Talent/Feasibility/Bottom line). "
-        f"300-400 words. Neutral, direct tone. Do NOT fabricate specific employers unless confident."
+        f"300-400 words. Neutral, direct tone. Do NOT fabricate specific employers unless confident. "
+        f"Never use broad boilerplate wording; each bullet must reference a concrete metric, role, "
+        f"or local industry fact from the provided metrics."
     )
     user_msg = f"Internal metrics for {geography_name}:\n{metric_block}"
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 from typing import Any
@@ -132,6 +133,20 @@ def _parse_iso_to_ts(iso: Any) -> float:
 
 def _model_name() -> str:
     return cheap_model()
+
+
+def _render_template_text(template: str, values: dict[str, str]) -> str:
+    """Render ``{{token}}`` placeholders with known values.
+
+    Unknown placeholders are replaced with an empty string so operators can
+    safely include optional fields without breaking draft generation.
+    """
+    pattern = re.compile(r"\{\{\s*([a-zA-Z0-9_]+)\s*\}\}")
+    return pattern.sub(lambda m: values.get(m.group(1), ""), template or "")
+
+
+def _truthy_env(name: str, default: str = "0") -> bool:
+    return os.getenv(name, default).strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _openai_structured_json(
@@ -343,6 +358,62 @@ def _compute_work_fit(
 class WorkTriggerService:
     def __init__(self, store: WorkTriggerStore) -> None:
         self.store = store
+
+    def _send_linkedin_automation(
+        self,
+        *,
+        action: str,
+        draft: dict[str, Any],
+        contact: dict[str, Any],
+        account: dict[str, Any],
+    ) -> str:
+        webhook_url = os.getenv("LINKEDIN_AUTOMATION_WEBHOOK_URL", "").strip()
+        if not webhook_url:
+            raise HTTPException(
+                status_code=503,
+                detail="LINKEDIN_AUTOMATION_WEBHOOK_URL is required for LinkedIn automation.",
+            )
+
+        linkedin_url = str(contact.get("linkedin_url") or "").strip()
+        if not linkedin_url:
+            raise HTTPException(status_code=400, detail="Contact has no linkedin_url for LinkedIn automation.")
+
+        token = os.getenv("LINKEDIN_AUTOMATION_WEBHOOK_TOKEN", "").strip()
+        headers = {"Content-Type": "application/json"}
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+
+        note_or_message = str(draft.get("linkedin_dm") or draft.get("email_body") or "").strip()
+        if action == "connect_note":
+            # LinkedIn invitation notes are capped (typically 300 chars).
+            note_or_message = note_or_message[:300]
+
+        payload = {
+            "action": action,  # "connect_note" or "inmail"
+            "draft_id": draft.get("id"),
+            "account_id": draft.get("account_id"),
+            "contact_id": draft.get("contact_id"),
+            "company_name": account.get("name") or account.get("domain"),
+            "contact_name": contact.get("full_name"),
+            "linkedin_url": linkedin_url,
+            "message": note_or_message,
+            "subject": draft.get("subject_a") or "",
+        }
+
+        with httpx.Client(timeout=20) as client:
+            resp = client.post(webhook_url, headers=headers, json=payload)
+        if resp.status_code >= 300:
+            raise HTTPException(status_code=502, detail=f"LinkedIn automation failed: {resp.text}")
+        try:
+            body = resp.json()
+        except ValueError:
+            body = {}
+        return str(
+            body.get("message_id")
+            or body.get("id")
+            or body.get("task_id")
+            or f"linkedin_{action}_{draft.get('id')}"
+        )
 
     def build_grounding_package(
         self, *, task_name: str, account: dict[str, Any], extras: dict[str, Any] | None = None
@@ -610,7 +681,9 @@ class WorkTriggerService:
             f"work hypothesis for what Figwork could help this company with.\n\n"
             f"Be SPECIFIC to {name}'s actual situation. Reference real signals from the data above. "
             f"Do NOT be generic. If they are hiring aggressively in engineering, say so. "
-            f"If they have a pain point around compliance, address it.\n\n"
+            f"If they have a pain point around compliance, address it.\n"
+            f"Avoid broad wording like 'optimize operations', 'improve efficiency', "
+            f"or 'drive growth' unless tied to explicit evidence from the provided signals.\n\n"
             f"- probable_problem: 2-3 sentences about their specific operational challenge, referencing signals\n"
             f"- probable_deliverable: A concrete project scope Figwork could staff (1-2 sentences)\n"
             f"- talent_archetype: Specific role titles + specializations needed (not generic)\n"
@@ -777,6 +850,7 @@ class WorkTriggerService:
         work_hypothesis_id: str,
         channel: str,
         outreach_mode: str | None = None,
+        template_id: str | None = None,
     ) -> str:
         """Generate a single outreach draft for one (account, contact, hypothesis).
 
@@ -868,6 +942,47 @@ class WorkTriggerService:
             f"- No fake compliments. No 'I came across your profile'. Direct and specific.\n"
             f"- subject_a and subject_b should be different A/B test variants\n"
         )
+
+        if template_id:
+            template = self.store.get_email_template(template_id)
+            template_values: dict[str, str] = {
+                "first_name": contact_first if contact_first and contact_first != "there" else "",
+                "full_name": contact_name if contact_name and contact_name != "there" else "",
+                "contact_title": contact_title,
+                "company_name": company_name,
+                "domain": domain,
+                "industry": str(industry),
+                "employees": str(employees) if employees is not None else "",
+                "funding_stage": str(funding),
+                "probable_problem": str(problem),
+                "probable_deliverable": str(deliverable),
+                "talent_archetype": str(archetype),
+                "job_title": (target_job or {}).get("title", ""),
+                "job_url": (target_job or {}).get("url", ""),
+            }
+            return self.store.save_draft(
+                account_id=account_id,
+                contact_id=contact_id,
+                work_hypothesis_id=work_hypothesis_id,
+                channel=channel,
+                subject_a=_render_template_text(str(template.get("subject_a") or ""), template_values),
+                subject_b=_render_template_text(str(template.get("subject_b") or ""), template_values),
+                email_body=_render_template_text(str(template.get("email_body") or ""), template_values),
+                followup_body=_render_template_text(str(template.get("followup_body") or ""), template_values),
+                linkedin_dm=_render_template_text(str(template.get("linkedin_dm") or ""), template_values),
+                metadata={
+                    "model": "template",
+                    "version": "worktrigger-template-v1",
+                    "template_id": template.get("id"),
+                    "template_name": template.get("name"),
+                    "outreach_mode": outreach_mode,
+                    "target_job_title": (target_job or {}).get("title"),
+                },
+                outreach_mode=outreach_mode,
+                target_job_title=(target_job or {}).get("title"),
+                target_job_url=(target_job or {}).get("url"),
+            )
+
         grounding = self.build_grounding_package(
             task_name="draft_generation",
             account=account,
@@ -1020,6 +1135,7 @@ class WorkTriggerService:
                     contact_id=contact_id,
                     work_hypothesis_id=hypothesis_id,
                     channel=channel,
+                    template_id=None,
                 )
                 regenerated.append(new_id)
             except Exception as exc:
@@ -1078,19 +1194,42 @@ class WorkTriggerService:
         if draft["status"] != "approved":
             raise HTTPException(status_code=409, detail="Only approved drafts can be sent.")
 
+        contact = self.store.get_contact(draft["contact_id"])
+        account = self.store.get_account(draft["account_id"])
         channel = (draft.get("channel") or "email").strip().lower()
         if channel == "linkedin":
+            mode = os.getenv("WORKTRIGGER_LINKEDIN_AUTOMATION_MODE", "manual").strip().lower()
+            if mode == "manual":
+                self.store.update_draft(draft_id, status="sent", updated_at=_utc_now().isoformat())
+                return f"linkedin_manual_{draft_id}"
+            action = "connect_note" if mode in {"connect_note", "note", "invite_note"} else "inmail"
+            message_id = self._send_linkedin_automation(
+                action=action,
+                draft=draft,
+                contact=contact,
+                account=account,
+            )
             self.store.update_draft(draft_id, status="sent", updated_at=_utc_now().isoformat())
-            return f"linkedin_manual_{draft_id}"
+            return message_id
 
         api_key = os.getenv("RESEND_API_KEY", "").strip()
-        from_email = os.getenv("WORKTRIGGER_FROM_EMAIL", "").strip()
+        # Backward-compatible sender env names:
+        # - WORKTRIGGER_FROM_EMAIL (preferred, documented)
+        # - RESEND_FROM_EMAIL (legacy/common convention)
+        from_email = (
+            os.getenv("WORKTRIGGER_FROM_EMAIL", "").strip()
+            or os.getenv("RESEND_FROM_EMAIL", "").strip()
+        )
         if not api_key or not from_email:
+            missing: list[str] = []
+            if not api_key:
+                missing.append("RESEND_API_KEY")
+            if not from_email:
+                missing.append("WORKTRIGGER_FROM_EMAIL (or RESEND_FROM_EMAIL)")
             raise HTTPException(
                 status_code=503,
-                detail="RESEND_API_KEY and WORKTRIGGER_FROM_EMAIL are required for sending.",
+                detail=f"Email sending is not configured. Missing: {', '.join(missing)}.",
             )
-        contact = self.store.get_contact(draft["contact_id"])
         to_email = (contact.get("email") or "").strip()
         if not to_email:
             raise HTTPException(status_code=400, detail="Contact has no email.")
@@ -1099,7 +1238,6 @@ class WorkTriggerService:
         consent = self.store.get_consent(email=to_email, channel="email")
         if consent is not None and str(consent.get("status", "")).lower() not in {"granted", "double_opt_in"}:
             raise HTTPException(status_code=409, detail="Recipient consent does not permit sending.")
-        account = self.store.get_account(draft["account_id"])
         domain = str(account.get("domain") or "")
         cap = int(os.getenv("WORKTRIGGER_DAILY_SEND_CAP_PER_DOMAIN", "50"))
         sent_today = self.store.count_sent_by_domain_since(domain, (_utc_now() - timedelta(days=1)).isoformat())
@@ -1127,6 +1265,19 @@ class WorkTriggerService:
             if not message_id:
                 raise HTTPException(status_code=502, detail="Resend response missing message id.")
             self.store.update_draft(draft_id, status="sent", updated_at=_utc_now().isoformat())
+            # Optional cross-channel reminder: after email send, also trigger a
+            # LinkedIn Connect+Note automation for the same contact.
+            if _truthy_env("WORKTRIGGER_LINKEDIN_NOTE_AFTER_EMAIL", "0"):
+                try:
+                    self._send_linkedin_automation(
+                        action="connect_note",
+                        draft=draft,
+                        contact=contact,
+                        account=account,
+                    )
+                except Exception as exc:
+                    # Never fail the already-sent email if LinkedIn reminder fails.
+                    print(f"[WorkTrigger] LinkedIn note automation failed for draft={draft_id}: {exc}")
             return str(message_id)
         except HTTPException:
             raise
@@ -1354,6 +1505,7 @@ class WorkTriggerService:
             "Generate a concise first-call scoping brief for a services opportunity.\n"
             + "\n".join(context_lines)
             + "\nInclude concrete work packages and discovery questions."
+            + "\nDo not use broad consulting language. Every pain point, package, and question must map to explicit facts in the context."
         )
         schema = {
             "type": "object",
@@ -1429,6 +1581,7 @@ class WorkTriggerService:
                 contact_id=str(payload["contact_id"]),
                 work_hypothesis_id=str(payload["work_hypothesis_id"]),
                 channel=str(payload.get("channel", "email")),
+                template_id=(str(payload.get("template_id")) if payload.get("template_id") else None),
             )
             return {"draft_id": did}
         if job_type == "send_draft":
