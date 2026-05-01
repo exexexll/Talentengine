@@ -42,6 +42,9 @@ function invalidateSdrCache(prefix: string): void {
   for (const key of Array.from(_sdrCache.keys())) {
     if (key.includes(prefix)) _sdrCache.delete(key);
   }
+  for (const key of Array.from(_sdrInFlight.keys())) {
+    if (key.includes(prefix)) _sdrInFlight.delete(key);
+  }
 }
 
 function toTs(value: unknown): number {
@@ -193,8 +196,12 @@ export function SdrWorkspace({ onBack, onOpenMap, onOpenWtAnalytics }: SdrWorksp
   }, [loadEmailTemplates]);
 
   const [undraftedAccounts, setUndraftedAccounts] = React.useState<Array<Record<string, unknown>>>([]);
+  const latestQueueRequestRef = React.useRef(0);
 
   const loadQueue = React.useCallback(async (force = false) => {
+    const requestId = latestQueueRequestRef.current + 1;
+    latestQueueRequestRef.current = requestId;
+    const isStale = () => latestQueueRequestRef.current !== requestId;
     setLoading(true);
     try {
       if (force) {
@@ -205,10 +212,15 @@ export function SdrWorkspace({ onBack, onOpenMap, onOpenWtAnalytics }: SdrWorksp
         sdrFetch<QueueRow[]>(`/api/worktrigger/queue?status=all&limit=500`),
         sdrFetch<Array<Record<string, unknown>>>(`/api/worktrigger/accounts/all?limit=500`),
       ]);
+      if (isStale()) return;
       setRows(queueData);
       const acctIdsWithDrafts = new Set(queueData.map((d: QueueRow) => d.account_id));
       setUndraftedAccounts(accts.filter((a: Record<string, unknown>) => !acctIdsWithDrafts.has(a.id as string)));
-    } catch (e) { flash(`Queue load failed: ${e instanceof Error ? e.message : "network error"}`); } finally { setLoading(false); }
+    } catch (e) {
+      if (!isStale()) flash(`Queue load failed: ${e instanceof Error ? e.message : "network error"}`);
+    } finally {
+      if (!isStale()) setLoading(false);
+    }
   }, []);
 
   React.useEffect(() => { void loadQueue(); }, [loadQueue]);
@@ -399,7 +411,7 @@ export function SdrWorkspace({ onBack, onOpenMap, onOpenWtAnalytics }: SdrWorksp
     return true;
   }).sort((a, b) => {
     if (sortBy === "signal") return (b.signal_score || 0) - (a.signal_score || 0);
-    return (b.updated_at || "").localeCompare(a.updated_at || "");
+    return toTs(b.updated_at) - toTs(a.updated_at);
   });
 
   return (
@@ -629,7 +641,7 @@ export function SdrWorkspace({ onBack, onOpenMap, onOpenWtAnalytics }: SdrWorksp
                   const a = STATUS_PRIORITY[existing.status] ?? 99;
                   const b = STATUS_PRIORITY[row.status] ?? 99;
                   if (b < a) { byAccount.set(acct, row); continue; }
-                  if (b === a && (row.updated_at || "") > (existing.updated_at || "")) {
+                  if (b === a && toTs(row.updated_at) > toTs(existing.updated_at)) {
                     byAccount.set(acct, row);
                   }
                 }
