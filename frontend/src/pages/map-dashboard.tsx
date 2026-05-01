@@ -1708,7 +1708,7 @@ export function MapDashboard({ onOpenFullRankingsPage, onOpenSdr }: MapDashboard
   }, [pinnedGeography]);
 
   React.useEffect(() => {
-    if (!pinnedGeography || discoveryPage < 2) return;
+    if (!pinnedGeography || discoveryPage < 1) return;
     void loadDiscovery(pinnedGeography, discoveryPage);
   }, [discoveryPage]);
 
