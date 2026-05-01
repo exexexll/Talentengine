@@ -17,6 +17,7 @@ DraftStatus = Literal[
 
 ReviewAction = Literal[
     "approve",
+    "unapprove",
     "edit_and_approve",
     "discard",
     "snooze",

@@ -310,7 +310,7 @@ export function SdrWorkspace({ onBack, onOpenMap, onOpenWtAnalytics }: SdrWorksp
 
   const actionLabels: Record<string, string> = {
     approve: "approved", edit_and_approve: "approved (edited)", discard: "discarded",
-    snooze: "snoozed", reroute_contact: "rerouted (contact)", reroute_angle: "rerouted (angle)",
+    unapprove: "moved back to draft", snooze: "snoozed", reroute_contact: "rerouted (contact)", reroute_angle: "rerouted (angle)",
   };
 
   const act = async (draftId: string, action: string, extra?: Record<string, unknown>) => {
@@ -713,7 +713,10 @@ export function SdrWorkspace({ onBack, onOpenMap, onOpenWtAnalytics }: SdrWorksp
                             </>
                           ) : null}
                           {item.status === "approved" ? (
-                            <button className="sdr-btn sdr-btn-success sdr-btn-sm" onClick={e => { e.stopPropagation(); void sendDraft(item.draftId); }}>Send</button>
+                            <>
+                              <button className="sdr-btn sdr-btn-success sdr-btn-sm" onClick={e => { e.stopPropagation(); void sendDraft(item.draftId); }}>Send</button>
+                              <button className="sdr-btn sdr-btn-sm" onClick={e => { e.stopPropagation(); void act(item.draftId, "unapprove"); }}>Move to Draft</button>
+                            </>
                           ) : null}
                           {item.status === "sent" ? (
                             <span style={{ fontSize: 11, color: "#059669", fontWeight: 600 }}>Sent ✓</span>
@@ -1463,7 +1466,10 @@ function OutreachCard({
           </>
         ) : null}
         {status === "approved" ? (
-          <button className="ob-btn ob-btn-success ob-btn-sm" onClick={onSend} title="s">Send →</button>
+          <>
+            <button className="ob-btn ob-btn-success ob-btn-sm" onClick={onSend} title="s">Send →</button>
+            <button className="ob-btn ob-btn-sm" onClick={() => onAct("unapprove")} title="Move back to draft">Draft ←</button>
+          </>
         ) : null}
         {status === "sent" ? <span className="ob-card-sent">Sent ✓</span> : null}
         {status === "replied" ? <span className="ob-card-replied">Replied ✦</span> : null}
@@ -2025,6 +2031,17 @@ function ContactDraftInline({ draft: d, statusConfig: st, onRefresh }: {
     finally { setSending(false); }
   };
 
+  const moveBackToDraft = async () => {
+    try {
+      await fetch(`/api/worktrigger/drafts/${encodeURIComponent(String(d.id))}/review`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "unapprove", reviewer_user_id: "sdr_operator_1" }),
+      });
+      onRefresh();
+    } catch { /* silent */ }
+  };
+
   return (
     <div style={{ border: "1px solid #e5e7eb", borderRadius: 8, padding: 12, background: "#fafbfc" }}>
       {/* Status + actions row */}
@@ -2042,9 +2059,14 @@ function ContactDraftInline({ draft: d, statusConfig: st, onRefresh }: {
         </div>
         <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
           {d.status === "approved" ? (
-            <button className="sdr-btn sdr-btn-success sdr-btn-sm" style={{ padding: "3px 10px" }} disabled={sending} onClick={() => void sendDraft()}>
-              {sending ? "Sending..." : "Send Now"}
-            </button>
+            <>
+              <button className="sdr-btn sdr-btn-success sdr-btn-sm" style={{ padding: "3px 10px" }} disabled={sending} onClick={() => void sendDraft()}>
+                {sending ? "Sending..." : "Send Now"}
+              </button>
+              <button className="sdr-btn sdr-btn-sm" style={{ padding: "3px 10px" }} onClick={() => void moveBackToDraft()}>
+                Move to Draft
+              </button>
+            </>
           ) : null}
           {dirty ? (
             <button className="sdr-btn sdr-btn-primary sdr-btn-sm" style={{ padding: "3px 10px" }} disabled={saving} onClick={() => void saveDraft()}>
@@ -3702,10 +3724,13 @@ function PipelineBoard({ drafts, onRefresh, flash }: { drafts: QueueRow[]; onRef
                         </>
                       ) : null}
                       {col.key === "approved" ? (
-                        <button className="sdr-btn sdr-btn-success sdr-btn-sm" onClick={async () => {
-                          await fetch(`/api/worktrigger/drafts/${encodeURIComponent(d.draft_id)}/send`, { method: "POST" });
-                          onRefresh();
-                        }}>Send now</button>
+                        <>
+                          <button className="sdr-btn sdr-btn-success sdr-btn-sm" onClick={async () => {
+                            await fetch(`/api/worktrigger/drafts/${encodeURIComponent(d.draft_id)}/send`, { method: "POST" });
+                            onRefresh();
+                          }}>Send now</button>
+                          <button className="sdr-btn sdr-btn-sm" onClick={() => void quickAct(d.draft_id, "unapprove")}>Move to Draft</button>
+                        </>
                       ) : null}
                       {col.key === "sent" ? (
                         <button className="sdr-btn sdr-btn-sm" onClick={async () => {

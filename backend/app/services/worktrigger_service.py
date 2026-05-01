@@ -1148,6 +1148,7 @@ class WorkTriggerService:
         draft = self.store.get_draft(draft_id)
         action_status_map = {
             "approve": "approved",
+            "unapprove": "draft_ready",
             "edit_and_approve": "approved",
             "discard": "discarded",
             "snooze": "snoozed",
