@@ -63,6 +63,7 @@ type QueueRow = {
   outreach_mode?: string | null;
   target_job_title?: string | null;
   target_job_url?: string | null;
+  template_id?: string | null;
 };
 
 type AccountDetail = {
@@ -1551,6 +1552,12 @@ function OutreachContextRail({ row, onClose, onOpenDetailed, onRefreshQueue, onG
   const [saveErr, setSaveErr] = React.useState("");
   const [selectedTemplateId, setSelectedTemplateId] = React.useState("");
   const [draftGenerating, setDraftGenerating] = React.useState(false);
+
+  // Keep the dropdown aligned with the currently focused draft's source
+  // template so switching cards does not leak prior card selections.
+  React.useEffect(() => {
+    setSelectedTemplateId(String(row.template_id || ""));
+  }, [row.draft_id, row.template_id]);
 
   React.useEffect(() => {
     if (!row.account_id) return;

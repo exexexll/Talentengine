@@ -365,6 +365,7 @@ def review_queue(status: str = "draft_ready", limit: int = 100) -> list[dict[str
                 "outreach_mode": d.get("outreach_mode"),
                 "target_job_title": d.get("target_job_title"),
                 "target_job_url": d.get("target_job_url"),
+                "template_id": ((d.get("generation_metadata") or {}).get("template_id")),
             }
         )
     return out
