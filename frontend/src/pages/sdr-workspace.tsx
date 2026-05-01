@@ -3042,9 +3042,9 @@ function AccountDetailPane({
             </div>
             <div style={{ display: "grid", gap: 6, marginTop: 2 }}>
               <input placeholder="Template name" value={tplName} onChange={e => setTplName(e.target.value)} style={{ padding: "4px 8px", fontSize: 12, border: "1px solid #d1d5db", borderRadius: 4 }} />
-              <input placeholder="Subject A (supports {{first_name}}, {{company_name}}, {{job_title}})" value={tplSubjectA} onChange={e => setTplSubjectA(e.target.value)} style={{ padding: "4px 8px", fontSize: 12, border: "1px solid #d1d5db", borderRadius: 4 }} />
+              <input placeholder="Subject A seed (AI will personalize it)" value={tplSubjectA} onChange={e => setTplSubjectA(e.target.value)} style={{ padding: "4px 8px", fontSize: 12, border: "1px solid #d1d5db", borderRadius: 4 }} />
               <input placeholder="Subject B (optional)" value={tplSubjectB} onChange={e => setTplSubjectB(e.target.value)} style={{ padding: "4px 8px", fontSize: 12, border: "1px solid #d1d5db", borderRadius: 4 }} />
-              <textarea placeholder="Email body template (supports placeholders like {{first_name}}, {{probable_problem}}, {{probable_deliverable}})" value={tplBody} onChange={e => setTplBody(e.target.value)} rows={4} style={{ padding: "6px 8px", fontSize: 12, border: "1px solid #d1d5db", borderRadius: 4, resize: "vertical" }} />
+              <textarea placeholder="Email body seed (AI will customize by recipient + company signals)" value={tplBody} onChange={e => setTplBody(e.target.value)} rows={4} style={{ padding: "6px 8px", fontSize: 12, border: "1px solid #d1d5db", borderRadius: 4, resize: "vertical" }} />
               <input placeholder="Follow-up template (optional)" value={tplFollowup} onChange={e => setTplFollowup(e.target.value)} style={{ padding: "4px 8px", fontSize: 12, border: "1px solid #d1d5db", borderRadius: 4 }} />
               <input placeholder="LinkedIn DM template (optional)" value={tplLinkedinDm} onChange={e => setTplLinkedinDm(e.target.value)} style={{ padding: "4px 8px", fontSize: 12, border: "1px solid #d1d5db", borderRadius: 4 }} />
               <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
@@ -3322,7 +3322,7 @@ function EmailTemplatesPanel({
             style={{ padding: "6px 8px", fontSize: 12, border: "1px solid #d1d5db", borderRadius: 4 }}
           />
           <input
-            placeholder="Subject A (supports {{first_name}}, {{company_name}}, {{job_title}})"
+            placeholder="Subject A seed (AI will personalize it)"
             value={tplSubjectA}
             onChange={(e) => setTplSubjectA(e.target.value)}
             style={{ padding: "6px 8px", fontSize: 12, border: "1px solid #d1d5db", borderRadius: 4 }}
@@ -3334,7 +3334,7 @@ function EmailTemplatesPanel({
             style={{ padding: "6px 8px", fontSize: 12, border: "1px solid #d1d5db", borderRadius: 4 }}
           />
           <textarea
-            placeholder="Email body (supports {{probable_problem}}, {{probable_deliverable}}, {{talent_archetype}})"
+            placeholder="Email body seed (AI will customize by recipient + company signals)"
             value={tplBody}
             onChange={(e) => setTplBody(e.target.value)}
             rows={5}

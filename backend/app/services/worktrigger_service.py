@@ -917,6 +917,24 @@ class WorkTriggerService:
                 "- Lead with the inferred problem/deliverable from the work hypothesis.\n"
             )
 
+        template_hint = ""
+        template_name = ""
+        if template_id:
+            template = self.store.get_email_template(template_id)
+            template_name = str(template.get("name") or "")
+            template_hint = (
+                "\nTEMPLATE PRESET (use as a style + structure starting point, NOT as fixed text):\n"
+                f"- Template name: {template_name}\n"
+                f"- subject_a seed: {str(template.get('subject_a') or '')}\n"
+                f"- subject_b seed: {str(template.get('subject_b') or '')}\n"
+                f"- email_body seed: {str(template.get('email_body') or '')}\n"
+                f"- followup_body seed: {str(template.get('followup_body') or '')}\n"
+                f"- linkedin_dm seed: {str(template.get('linkedin_dm') or '')}\n"
+                "- Rewrite and personalize these seeds using recipient/company/signal context.\n"
+                "- Keep the intent and tone from the template, but do not copy verbatim generic lines.\n"
+                "- If template text conflicts with actual account signals, prefer real signals.\n"
+            )
+
         prompt = (
             f"Write a personalized cold outreach email from a Figwork sales rep.\n\n"
             f"{mode_block}\n"
@@ -941,47 +959,8 @@ class WorkTriggerService:
             f"- Sign off as the Figwork team (not '[Your Name]')\n"
             f"- No fake compliments. No 'I came across your profile'. Direct and specific.\n"
             f"- subject_a and subject_b should be different A/B test variants\n"
+            f"{template_hint}"
         )
-
-        if template_id:
-            template = self.store.get_email_template(template_id)
-            template_values: dict[str, str] = {
-                "first_name": contact_first if contact_first and contact_first != "there" else "",
-                "full_name": contact_name if contact_name and contact_name != "there" else "",
-                "contact_title": contact_title,
-                "company_name": company_name,
-                "domain": domain,
-                "industry": str(industry),
-                "employees": str(employees) if employees is not None else "",
-                "funding_stage": str(funding),
-                "probable_problem": str(problem),
-                "probable_deliverable": str(deliverable),
-                "talent_archetype": str(archetype),
-                "job_title": (target_job or {}).get("title", ""),
-                "job_url": (target_job or {}).get("url", ""),
-            }
-            return self.store.save_draft(
-                account_id=account_id,
-                contact_id=contact_id,
-                work_hypothesis_id=work_hypothesis_id,
-                channel=channel,
-                subject_a=_render_template_text(str(template.get("subject_a") or ""), template_values),
-                subject_b=_render_template_text(str(template.get("subject_b") or ""), template_values),
-                email_body=_render_template_text(str(template.get("email_body") or ""), template_values),
-                followup_body=_render_template_text(str(template.get("followup_body") or ""), template_values),
-                linkedin_dm=_render_template_text(str(template.get("linkedin_dm") or ""), template_values),
-                metadata={
-                    "model": "template",
-                    "version": "worktrigger-template-v1",
-                    "template_id": template.get("id"),
-                    "template_name": template.get("name"),
-                    "outreach_mode": outreach_mode,
-                    "target_job_title": (target_job or {}).get("title"),
-                },
-                outreach_mode=outreach_mode,
-                target_job_title=(target_job or {}).get("title"),
-                target_job_url=(target_job or {}).get("url"),
-            )
 
         grounding = self.build_grounding_package(
             task_name="draft_generation",
@@ -991,6 +970,8 @@ class WorkTriggerService:
                 "work_hypothesis_id": work_hypothesis_id,
                 "outreach_mode": outreach_mode,
                 "target_job_title": (target_job or {}).get("title"),
+                "template_id": template_id,
+                "template_name": template_name,
             },
         )
         schema = {
@@ -1026,6 +1007,8 @@ class WorkTriggerService:
             metadata={
                 "model": _model_name(),
                 "version": "worktrigger-v1",
+                "template_id": template_id,
+                "template_name": template_name,
                 "outreach_mode": outreach_mode,
                 "target_job_title": (target_job or {}).get("title"),
             },
