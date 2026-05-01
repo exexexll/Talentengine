@@ -2036,6 +2036,13 @@ export function MapDashboard({ onOpenFullRankingsPage, onOpenSdr }: MapDashboard
             <div className="micro-line">{deltaHighlights.join("  \u2022  ")}</div>
           ) : null}
 
+          {/* Sidebar bottom dock — these two panels stay pinned to the bottom of
+              the sidebar viewport regardless of scroll position, so the user can
+              always reach the AI Industry Brief and the Companies-in-Area list
+              without hunting for them.  When collapsed they shrink to a single
+              header bar; when the user expands either, it pops out (position:
+              fixed) so neither covers the rankings table. */}
+          <div className="atlas-sidebar-dock">
           {aiPanelOpen ? (
             <div className={`ai-research-panel ${aiExpanded ? "ai-expanded" : ""}`}>
               <div className="ai-panel-header">
@@ -2204,6 +2211,8 @@ export function MapDashboard({ onOpenFullRankingsPage, onOpenSdr }: MapDashboard
               {discoveryExpanded && <div className="cdp-backdrop" onClick={() => setDiscoveryExpanded(false)} />}
             </>
           ) : null}
+          </div>
+          {/* /atlas-sidebar-dock — sticky bottom region ends here */}
 
           <div id="sidebar-rankings" ref={rankingsSectionRef} className="sidebar-rankings">
             <div className="sidebar-rankings-head">
