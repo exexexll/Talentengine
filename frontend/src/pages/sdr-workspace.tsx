@@ -44,6 +44,11 @@ function invalidateSdrCache(prefix: string): void {
   }
 }
 
+function toTs(value: unknown): number {
+  const parsed = Date.parse(String(value || ""));
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
 type SdrTab = "inbox" | "queue" | "ingest" | "analytics" | "templates";
 type AnalyticsSubTab = "pipeline" | "opportunities" | "accounts" | "operations";
 
@@ -359,6 +364,8 @@ export function SdrWorkspace({ onBack, onOpenMap, onOpenWtAnalytics }: SdrWorksp
     });
     if (!res.ok) { flash("Draft generation failed"); return; }
     flash("Draft generated");
+    invalidateSdrCache(`/api/worktrigger/accounts/${selectedAccountId}/detail`);
+    invalidateSdrCache("/api/worktrigger/drafts/");
     await loadQueue(true);
     void loadDetail(selectedAccountId);
   };
@@ -461,6 +468,8 @@ export function SdrWorkspace({ onBack, onOpenMap, onOpenWtAnalytics }: SdrWorksp
                 });
                 if (!res.ok) { flash("Draft generation failed"); return; }
                 flash("Draft generated");
+                invalidateSdrCache(`/api/worktrigger/accounts/${accountId}/detail`);
+                invalidateSdrCache("/api/worktrigger/drafts/");
                 await loadQueue(true);
               } catch (e) {
                 flash(`Draft generation error: ${e instanceof Error ? e.message : "network error"}`);
@@ -1039,7 +1048,7 @@ function OutreachInbox({
       if (!prev) { winner.set(key, r); continue; }
       const a = STATUS_PRIORITY[prev.status] ?? 99;
       const b = STATUS_PRIORITY[r.status] ?? 99;
-      if (b < a || (b === a && (r.updated_at || "") > (prev.updated_at || ""))) {
+      if (b < a || (b === a && toTs(r.updated_at) > toTs(prev.updated_at))) {
         winner.set(key, r);
       }
     }
@@ -1050,10 +1059,9 @@ function OutreachInbox({
         // simultaneously-created drafts still surface the hottest one
         // first.  Adjacent same-account grouping isn't applied for
         // recent-sort because the user explicitly asked for time order.
-        const ta = a.updated_at || "";
-        const tb = b.updated_at || "";
-        if (tb > ta) return 1;
-        if (tb < ta) return -1;
+        const ta = toTs(a.updated_at);
+        const tb = toTs(b.updated_at);
+        if (tb !== ta) return tb - ta;
         return (b.signal_score || 0) - (a.signal_score || 0);
       }
       // sortBy === "signal" (default)
@@ -1900,11 +1908,9 @@ function ContactWithDrafts({ contact: c, drafts, onGenerateDraft, onRefresh, acc
   // browsed via the Pipeline board if the user genuinely needs them.
   const latestDraft = React.useMemo(() => {
     if (visibleDrafts.length === 0) return null;
-    const sorted = [...visibleDrafts].sort((a, b) => {
-      const ta = String(a.updated_at || a.created_at || "");
-      const tb = String(b.updated_at || b.created_at || "");
-      return tb.localeCompare(ta);
-    });
+    const sorted = [...visibleDrafts].sort(
+      (a, b) => toTs(b.updated_at || b.created_at) - toTs(a.updated_at || a.created_at),
+    );
     return sorted[0];
   }, [visibleDrafts]);
   const archivedCount = drafts.length - visibleDrafts.length;
