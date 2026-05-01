@@ -438,12 +438,40 @@ export function SdrWorkspace({ onBack, onOpenMap, onOpenWtAnalytics }: SdrWorksp
             rows={rows}
             onAct={async (draftId, action, extra) => act(draftId, action, extra)}
             onSend={async (draftId) => sendDraft(draftId)}
+            onGenerateDraft={async (accountId, contactId, templateId) => {
+              try {
+                const dres = await fetch(`/api/worktrigger/accounts/${encodeURIComponent(accountId)}/detail`);
+                if (!dres.ok) { flash("Could not load account detail for draft generation"); return; }
+                const d = (await dres.json()) as AccountDetail;
+                const h = d.work_hypotheses?.[0];
+                if (!h?.id) { flash("Generate a hypothesis first (Detailed tab)"); return; }
+                const cid = contactId || d.contacts?.[0]?.id;
+                if (!cid) { flash("No contact with email available for draft generation"); return; }
+                const res = await fetch("/api/worktrigger/drafts/generate", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    account_id: accountId,
+                    contact_id: String(cid),
+                    work_hypothesis_id: String(h.id),
+                    channel: "email",
+                    ...(templateId ? { template_id: templateId } : {}),
+                  }),
+                });
+                if (!res.ok) { flash("Draft generation failed"); return; }
+                flash("Draft generated");
+                await loadQueue(true);
+              } catch (e) {
+                flash(`Draft generation error: ${e instanceof Error ? e.message : "network error"}`);
+              }
+            }}
             onRefresh={() => loadQueue(true)}
             onOpenDetailed={(accountId) => {
               setTab("queue");
               void loadDetail(accountId);
             }}
             geoNames={geoNames}
+            emailTemplates={emailTemplates}
             flash={flash}
             loading={loading}
           />
@@ -714,7 +742,6 @@ export function SdrWorkspace({ onBack, onOpenMap, onOpenWtAnalytics }: SdrWorksp
                   onGenerateDraft={(cid, templateId) => void generateDraft(cid, templateId)}
                   onRefreshDetail={() => { if (selectedAccountId) void loadDetail(selectedAccountId); }}
                   emailTemplates={emailTemplates}
-                  onTemplatesChanged={() => { void loadEmailTemplates(true); }}
                   onAccountDeleted={async () => {
                     flash("Account deleted");
                     setSelectedAccountId(null);
@@ -930,14 +957,16 @@ const STATUS_CONFIG: Record<string, { label: string; color: string; bg: string }
 type InboxStatusFilter = "all_active" | "draft_ready" | "approved" | "sent" | "replied";
 
 function OutreachInbox({
-  rows, onAct, onSend, onRefresh, onOpenDetailed, geoNames, flash, loading,
+  rows, onAct, onSend, onGenerateDraft, onRefresh, onOpenDetailed, geoNames, emailTemplates, flash, loading,
 }: {
   rows: QueueRow[];
   onAct: (draftId: string, action: string, extra?: Record<string, unknown>) => Promise<void>;
   onSend: (draftId: string) => Promise<void>;
+  onGenerateDraft: (accountId: string, contactId?: string, templateId?: string) => Promise<void>;
   onRefresh: () => void;
   onOpenDetailed: (accountId: string) => void;
   geoNames: Record<string, string>;
+  emailTemplates: EmailTemplate[];
   flash: (msg: string) => void;
   loading: boolean;
 }) {
@@ -1301,6 +1330,8 @@ function OutreachInbox({
             onClose={() => setContextOpen(false)}
             onOpenDetailed={() => onOpenDetailed(focused.account_id)}
             onRefreshQueue={onRefresh}
+            onGenerateDraft={onGenerateDraft}
+            emailTemplates={emailTemplates}
           />
         ) : null}
       </div>
@@ -1483,7 +1514,7 @@ type DraftFull = {
   target_job_url?: string | null;
 };
 
-function OutreachContextRail({ row, onClose, onOpenDetailed, onRefreshQueue }: {
+function OutreachContextRail({ row, onClose, onOpenDetailed, onRefreshQueue, onGenerateDraft, emailTemplates }: {
   row: QueueRow;
   onClose: () => void;
   onOpenDetailed: () => void;
@@ -1491,6 +1522,8 @@ function OutreachContextRail({ row, onClose, onOpenDetailed, onRefreshQueue }: {
    *  the parent inbox to re-fetch the queue so any regenerated draft's
    *  ``target_job_title`` shows up as a purple pill on its card. */
   onRefreshQueue: () => void;
+  onGenerateDraft: (accountId: string, contactId?: string, templateId?: string) => Promise<void>;
+  emailTemplates: EmailTemplate[];
 }) {
   // Lightweight account snapshot + the actual email that will go out.
   // Both are cached for 60s so j/k navigation is essentially free.
@@ -1510,6 +1543,8 @@ function OutreachContextRail({ row, onClose, onOpenDetailed, onRefreshQueue }: {
   const [editBody, setEditBody] = React.useState("");
   const [saving, setSaving] = React.useState(false);
   const [saveErr, setSaveErr] = React.useState("");
+  const [selectedTemplateId, setSelectedTemplateId] = React.useState("");
+  const [draftGenerating, setDraftGenerating] = React.useState(false);
 
   React.useEffect(() => {
     if (!row.account_id) return;
@@ -1663,6 +1698,39 @@ function OutreachContextRail({ row, onClose, onOpenDetailed, onRefreshQueue }: {
             </span>
           ) : null}
         </div>
+        {row.account_id ? (
+          <div style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 8 }}>
+            <select
+              className="ob-select"
+              value={selectedTemplateId}
+              onChange={(e) => setSelectedTemplateId(e.target.value)}
+              title="Optional template for new draft"
+              style={{ flex: 1 }}
+            >
+              <option value="">Default (AI generated)</option>
+              {emailTemplates.map((tpl) => (
+                <option key={tpl.id} value={tpl.id}>{tpl.name}</option>
+              ))}
+            </select>
+            <button
+              className="ob-btn ob-btn-sm"
+              disabled={draftGenerating || !row.contact_id}
+              onClick={async () => {
+                if (!row.account_id) return;
+                setDraftGenerating(true);
+                try {
+                  await onGenerateDraft(row.account_id, row.contact_id, selectedTemplateId || undefined);
+                  onRefreshQueue();
+                } finally {
+                  setDraftGenerating(false);
+                }
+              }}
+              title={row.contact_id ? "Generate a new draft for this contact" : "No contact on this row"}
+            >
+              {draftGenerating ? "Generating…" : "+ Draft"}
+            </button>
+          </div>
+        ) : null}
         {recipient ? <div className="ob-rail-email-to">To · <strong>{recipient}</strong></div> : null}
         {loading && !draft ? (
           <div className="ob-rail-skel">Loading email…</div>
@@ -2593,7 +2661,6 @@ function AccountDetailPane({
   onGenerateDraft,
   onRefreshDetail,
   emailTemplates,
-  onTemplatesChanged,
   onAccountDeleted,
 }: {
   detail: AccountDetail;
@@ -2602,7 +2669,6 @@ function AccountDetailPane({
   onGenerateDraft: (contactId?: string, templateId?: string) => void;
   onRefreshDetail: () => void;
   emailTemplates: EmailTemplate[];
-  onTemplatesChanged: () => void;
   onAccountDeleted: () => void;
 }) {
   const acct = detail.account;
@@ -2615,14 +2681,6 @@ function AccountDetailPane({
   const [socialSignals, setSocialSignals] = React.useState<Record<string, unknown> | null>(null);
   const [socialLoading, setSocialLoading] = React.useState(false);
   const [socialRefreshing, setSocialRefreshing] = React.useState(false);
-  const [tplName, setTplName] = React.useState("");
-  const [tplSubjectA, setTplSubjectA] = React.useState("");
-  const [tplSubjectB, setTplSubjectB] = React.useState("");
-  const [tplBody, setTplBody] = React.useState("");
-  const [tplFollowup, setTplFollowup] = React.useState("");
-  const [tplLinkedinDm, setTplLinkedinDm] = React.useState("");
-  const [tplSaving, setTplSaving] = React.useState(false);
-  const [tplMsg, setTplMsg] = React.useState("");
 
   const acctDomain = String(acct.domain || "").trim();
   const acctName = String(acct.name || "");
@@ -2717,62 +2775,6 @@ function AccountDetailPane({
       onRefreshDetail();
     } catch { setContactMsg("Search error"); }
     finally { setContactSearching(false); setTimeout(() => setContactMsg(""), 3000); }
-  };
-
-  const saveTemplate = async () => {
-    if (!tplName.trim() || !tplSubjectA.trim() || !tplBody.trim()) {
-      setTplMsg("Template name, subject, and body are required.");
-      return;
-    }
-    setTplSaving(true);
-    try {
-      const res = await fetch("/api/worktrigger/templates/email", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name: tplName,
-          subject_a: tplSubjectA,
-          subject_b: tplSubjectB,
-          email_body: tplBody,
-          followup_body: tplFollowup,
-          linkedin_dm: tplLinkedinDm,
-        }),
-      });
-      if (!res.ok) {
-        setTplMsg("Template save failed");
-        return;
-      }
-      setTplName("");
-      setTplSubjectA("");
-      setTplSubjectB("");
-      setTplBody("");
-      setTplFollowup("");
-      setTplLinkedinDm("");
-      setTplMsg("Template saved");
-      onTemplatesChanged();
-    } catch {
-      setTplMsg("Template save failed");
-    } finally {
-      setTplSaving(false);
-      setTimeout(() => setTplMsg(""), 2500);
-    }
-  };
-
-  const deleteTemplate = async (templateId: string) => {
-    if (!confirm("Delete this email template?")) return;
-    try {
-      const res = await fetch(`/api/worktrigger/templates/email/${encodeURIComponent(templateId)}`, { method: "DELETE" });
-      if (res.ok) {
-        setTplMsg("Template deleted");
-        onTemplatesChanged();
-      } else {
-        setTplMsg("Delete failed");
-      }
-    } catch {
-      setTplMsg("Delete failed");
-    } finally {
-      setTimeout(() => setTplMsg(""), 2500);
-    }
   };
 
   return (
@@ -3029,30 +3031,6 @@ function AccountDetailPane({
       <div className="sdr-section">
         <div className="sdr-section-head">Contacts &amp; Outreach ({detail.contacts.length})</div>
         <div className="sdr-section-body" style={{ display: "grid", gap: 0 }}>
-          <div style={{ marginBottom: 10, padding: "0 0 10px", borderBottom: "1px solid #e5e7eb", display: "grid", gap: 6 }}>
-            <div style={{ fontSize: 11, fontWeight: 600, color: "#6b7280" }}>Email Templates</div>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-              {emailTemplates.map((tpl) => (
-                <span key={tpl.id} style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 11, border: "1px solid #dbe3e8", borderRadius: 999, padding: "2px 8px", background: "#f8fafc" }}>
-                  {tpl.name}
-                  <button type="button" onClick={() => void deleteTemplate(tpl.id)} style={{ border: "none", background: "none", color: "#9ca3af", cursor: "pointer", padding: 0 }} title="Delete template">✕</button>
-                </span>
-              ))}
-              {emailTemplates.length === 0 ? <span style={{ fontSize: 11, color: "#9ca3af" }}>No templates yet</span> : null}
-            </div>
-            <div style={{ display: "grid", gap: 6, marginTop: 2 }}>
-              <input placeholder="Template name" value={tplName} onChange={e => setTplName(e.target.value)} style={{ padding: "4px 8px", fontSize: 12, border: "1px solid #d1d5db", borderRadius: 4 }} />
-              <input placeholder="Subject A seed (AI will personalize it)" value={tplSubjectA} onChange={e => setTplSubjectA(e.target.value)} style={{ padding: "4px 8px", fontSize: 12, border: "1px solid #d1d5db", borderRadius: 4 }} />
-              <input placeholder="Subject B (optional)" value={tplSubjectB} onChange={e => setTplSubjectB(e.target.value)} style={{ padding: "4px 8px", fontSize: 12, border: "1px solid #d1d5db", borderRadius: 4 }} />
-              <textarea placeholder="Email body seed (AI will customize by recipient + company signals)" value={tplBody} onChange={e => setTplBody(e.target.value)} rows={4} style={{ padding: "6px 8px", fontSize: 12, border: "1px solid #d1d5db", borderRadius: 4, resize: "vertical" }} />
-              <input placeholder="Follow-up template (optional)" value={tplFollowup} onChange={e => setTplFollowup(e.target.value)} style={{ padding: "4px 8px", fontSize: 12, border: "1px solid #d1d5db", borderRadius: 4 }} />
-              <input placeholder="LinkedIn DM template (optional)" value={tplLinkedinDm} onChange={e => setTplLinkedinDm(e.target.value)} style={{ padding: "4px 8px", fontSize: 12, border: "1px solid #d1d5db", borderRadius: 4 }} />
-              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                <button className="sdr-btn sdr-btn-sm" disabled={tplSaving} onClick={() => void saveTemplate()}>{tplSaving ? "Saving..." : "Save template"}</button>
-                {tplMsg ? <span style={{ fontSize: 11, color: "#059669" }}>{tplMsg}</span> : null}
-              </div>
-            </div>
-          </div>
           {detail.contacts.map((c, i) => {
             const cid = String(c.id);
             const contactDrafts = detail.drafts.filter((d: Record<string, unknown>) => String(d.contact_id) === cid);
@@ -3218,8 +3196,29 @@ function EmailTemplatesPanel({
   const [tplBody, setTplBody] = React.useState("");
   const [tplFollowup, setTplFollowup] = React.useState("");
   const [tplLinkedinDm, setTplLinkedinDm] = React.useState("");
+  const [editingTemplateId, setEditingTemplateId] = React.useState<string | null>(null);
   const [tplSaving, setTplSaving] = React.useState(false);
   const [tplDeletingId, setTplDeletingId] = React.useState<string | null>(null);
+
+  const resetTemplateForm = React.useCallback(() => {
+    setTplName("");
+    setTplSubjectA("");
+    setTplSubjectB("");
+    setTplBody("");
+    setTplFollowup("");
+    setTplLinkedinDm("");
+    setEditingTemplateId(null);
+  }, []);
+
+  const loadTemplateToForm = (tpl: EmailTemplate) => {
+    setTplName(String(tpl.name || ""));
+    setTplSubjectA(String(tpl.subject_a || ""));
+    setTplSubjectB(String(tpl.subject_b || ""));
+    setTplBody(String(tpl.email_body || ""));
+    setTplFollowup(String(tpl.followup_body || ""));
+    setTplLinkedinDm(String(tpl.linkedin_dm || ""));
+    setEditingTemplateId(tpl.id);
+  };
 
   const saveTemplate = async () => {
     if (!tplName.trim() || !tplSubjectA.trim() || !tplBody.trim()) {
@@ -3228,8 +3227,12 @@ function EmailTemplatesPanel({
     }
     setTplSaving(true);
     try {
-      const res = await fetch("/api/worktrigger/templates/email", {
-        method: "POST",
+      const isEditing = Boolean(editingTemplateId);
+      const url = isEditing
+        ? `/api/worktrigger/templates/email/${encodeURIComponent(String(editingTemplateId))}`
+        : "/api/worktrigger/templates/email";
+      const res = await fetch(url, {
+        method: isEditing ? "PUT" : "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           name: tplName,
@@ -3244,13 +3247,8 @@ function EmailTemplatesPanel({
         flash("Template save failed");
         return;
       }
-      setTplName("");
-      setTplSubjectA("");
-      setTplSubjectB("");
-      setTplBody("");
-      setTplFollowup("");
-      setTplLinkedinDm("");
-      flash("Template saved");
+      resetTemplateForm();
+      flash(isEditing ? "Template updated" : "Template saved");
       onTemplatesChanged();
     } catch (e) {
       flash(`Template save failed: ${e instanceof Error ? e.message : "network error"}`);
@@ -3268,6 +3266,7 @@ function EmailTemplatesPanel({
         flash("Template delete failed");
         return;
       }
+      if (editingTemplateId === templateId) resetTemplateForm();
       flash("Template deleted");
       onTemplatesChanged();
     } catch (e) {
@@ -3299,6 +3298,14 @@ function EmailTemplatesPanel({
               {tpl.name}
               <button
                 type="button"
+                onClick={() => loadTemplateToForm(tpl)}
+                style={{ border: "none", background: "none", color: "#2563eb", cursor: "pointer", padding: 0, fontSize: 11 }}
+                title="View/edit template"
+              >
+                Edit
+              </button>
+              <button
+                type="button"
                 onClick={() => void deleteTemplate(tpl.id)}
                 disabled={tplDeletingId === tpl.id}
                 style={{ border: "none", background: "none", color: "#9ca3af", cursor: "pointer", padding: 0 }}
@@ -3313,7 +3320,9 @@ function EmailTemplatesPanel({
       </div>
 
       <div className="sdr-card">
-        <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8 }}>Create Template</div>
+        <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8 }}>
+          {editingTemplateId ? "View / Edit Template" : "Create Template"}
+        </div>
         <div style={{ display: "grid", gap: 8 }}>
           <input
             placeholder="Template name"
@@ -3354,8 +3363,18 @@ function EmailTemplatesPanel({
           />
           <div>
             <button className="sdr-btn sdr-btn-primary sdr-btn-sm" disabled={tplSaving} onClick={() => void saveTemplate()}>
-              {tplSaving ? "Saving..." : "Save template"}
+              {tplSaving ? "Saving..." : (editingTemplateId ? "Update template" : "Save template")}
             </button>
+            {editingTemplateId ? (
+              <button
+                className="sdr-btn sdr-btn-sm"
+                style={{ marginLeft: 8 }}
+                disabled={tplSaving}
+                onClick={resetTemplateForm}
+              >
+                Cancel edit
+              </button>
+            ) : null}
           </div>
         </div>
       </div>

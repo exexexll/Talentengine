@@ -137,6 +137,15 @@ class EmailTemplateCreateRequest(BaseModel):
     linkedin_dm: str = Field(default="", max_length=2000)
 
 
+class EmailTemplateUpdateRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    subject_a: str = Field(min_length=1, max_length=240)
+    subject_b: str = Field(default="", max_length=240)
+    email_body: str = Field(min_length=1, max_length=8000)
+    followup_body: str = Field(default="", max_length=4000)
+    linkedin_dm: str = Field(default="", max_length=2000)
+
+
 class EmailTemplateResponse(BaseModel):
     id: str
     name: str

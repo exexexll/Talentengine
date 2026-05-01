@@ -15,6 +15,7 @@ from backend.app.models.worktrigger import (
     DraftGenerateResponse,
     EmailTemplateCreateRequest,
     EmailTemplateResponse,
+    EmailTemplateUpdateRequest,
     JobEnqueueRequest,
     JobRecordResponse,
     ReplyClassifyRequest,
@@ -237,6 +238,23 @@ def delete_email_template(template_id: str) -> dict[str, str]:
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return {"template_id": template_id, "status": "deleted"}
+
+
+@router.put("/templates/email/{template_id}", response_model=EmailTemplateResponse)
+def update_email_template(template_id: str, request: EmailTemplateUpdateRequest) -> EmailTemplateResponse:
+    try:
+        _store.update_email_template(
+            template_id,
+            name=request.name,
+            subject_a=request.subject_a,
+            subject_b=request.subject_b,
+            email_body=request.email_body,
+            followup_body=request.followup_body,
+            linkedin_dm=request.linkedin_dm,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return EmailTemplateResponse(**_store.get_email_template(template_id))
 
 
 @router.get("/drafts/{draft_id}")

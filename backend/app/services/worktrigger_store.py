@@ -1379,6 +1379,40 @@ class WorkTriggerStore:
                 raise KeyError(f"Unknown template_id={template_id}")
             conn.execute("DELETE FROM wt_email_templates WHERE id = ?", (template_id,))
 
+    def update_email_template(
+        self,
+        template_id: str,
+        *,
+        name: str,
+        subject_a: str,
+        subject_b: str,
+        email_body: str,
+        followup_body: str,
+        linkedin_dm: str,
+    ) -> None:
+        now = _utc_now()
+        with self._lock, self._conn() as conn:
+            row = conn.execute("SELECT id FROM wt_email_templates WHERE id = ?", (template_id,)).fetchone()
+            if row is None:
+                raise KeyError(f"Unknown template_id={template_id}")
+            conn.execute(
+                """
+                UPDATE wt_email_templates
+                SET name = ?, subject_a = ?, subject_b = ?, email_body = ?, followup_body = ?, linkedin_dm = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (
+                    name.strip(),
+                    subject_a.strip(),
+                    subject_b.strip(),
+                    email_body.strip(),
+                    followup_body.strip(),
+                    linkedin_dm.strip(),
+                    now,
+                    template_id,
+                ),
+            )
+
     def list_drafts_for_account(
         self,
         account_id: str,
