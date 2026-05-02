@@ -328,7 +328,7 @@ def _vendor_cache_set(key: str, value: Any) -> None:
 def _apollo_company_search(
     query: str,
     *,
-    industry: str = "",
+    industries: list[str] | None = None,
     limit: int = 8,
     page: int = 1,
 ) -> tuple[list[dict[str, Any]], int]:
@@ -350,8 +350,10 @@ def _apollo_company_search(
     ]
     if query:
         params.append(("q_organization_name", query))
-    if industry:
-        params.append(("q_organization_keyword_tags[]", industry.strip().lower()))
+    for industry in (industries or []):
+        clean = industry.strip().lower()
+        if clean:
+            params.append(("q_organization_keyword_tags[]", clean))
     try:
         with httpx.Client(timeout=15) as client:
             resp = client.post(
@@ -448,6 +450,7 @@ class SearchService:
         types: str = "all",
         limit: int = 20,
         apollo_page: int = 1,
+        industries: list[str] | None = None,
     ) -> dict[str, Any]:
         """Run the full pipeline.  Returns grouped results + metadata."""
         started = time.time()
@@ -457,6 +460,21 @@ class SearchService:
         norm = normalize_query(raw_query)
         effective = norm.effective_query()
         credits: dict[str, int] = {"apollo": 0, "pdl": 0, "hunter": 0}
+        selected_industries = [x.strip().lower() for x in (industries or []) if x and x.strip()]
+        heuristic_industries: list[str] = []
+        raw_lower = raw_query.strip().lower()
+        # Help short natural-language phrases like "student nonprofit"
+        # resolve into provider-friendly industry tags even when the LLM
+        # returns sparse hints.
+        if "student" in raw_lower:
+            heuristic_industries.append("education")
+        if "nonprofit" in raw_lower or "non-profit" in raw_lower:
+            heuristic_industries.append("nonprofit")
+        merged_industry_hints = list(dict.fromkeys([
+            *(x.strip().lower() for x in norm.industry_hints if x and x.strip()),
+            *heuristic_industries,
+            *selected_industries,
+        ]))
 
         # 1) Local — always cheap, always runs
         local_accounts_raw = self.store.fuzzy_search_accounts(effective, limit=max(4, limit // 2))
@@ -488,20 +506,20 @@ class SearchService:
 
         apollo_total = 0
         if want_companies and norm.intent in company_intents:
-            cache_key = f"cmp::{effective.lower()}::{'|'.join(norm.industry_hints)[:80]}::{types}::p{apollo_page}"
+            cache_key = f"cmp::{effective.lower()}::{'|'.join(merged_industry_hints)[:120]}::{types}::p{apollo_page}"
             cached = _vendor_cache_get(cache_key)
             if cached is not None:
                 companies = cached["companies"]
                 apollo_total = cached.get("total", len(companies))  # type: ignore[union-attr]
             else:
-                industry_hint = norm.industry_hints[0] if norm.industry_hints else ""
+                industry_hints = merged_industry_hints[:5]
                 # Industry-bulk maxes out Apollo's per_page at 100 (the
                 # hard API cap) so we get every company Apollo will give
                 # us for one credit.  Client-side pagination slices those
                 # 100 into 8-row pages with zero additional cost.  If the
                 # user explicitly clicks "Load next 100" the frontend
                 # bumps ``apollo_page`` to 2, which spends one more credit.
-                is_industry_bulk = norm.intent == "industry" or types == "industries"
+                is_industry_bulk = norm.intent == "industry" or types == "industries" or bool(industry_hints)
                 per_call_limit = 100 if is_industry_bulk else 8
                 if norm.intent == "industry" and not norm.company_hint:
                     q_for_apollo = ""
@@ -509,7 +527,7 @@ class SearchService:
                     q_for_apollo = norm.company_hint or effective
                 hits, total_avail = _apollo_company_search(
                     q_for_apollo,
-                    industry=industry_hint,
+                    industries=industry_hints,
                     limit=per_call_limit,
                     page=apollo_page,
                 )
@@ -564,7 +582,7 @@ class SearchService:
         people = _rank_people(people, effective, norm)
 
         # 5) Assemble response
-        is_industry_bulk = norm.intent == "industry" or types == "industries"
+        is_industry_bulk = norm.intent == "industry" or types == "industries" or bool(merged_industry_hints)
         groups: list[dict[str, Any]] = []
         if local_accounts:
             groups.append({"kind": "local_accounts", "label": "Already in your pipeline", "items": local_accounts[:8]})
@@ -576,7 +594,7 @@ class SearchService:
             # client-side with first 8 rich / rest compact and zero
             # additional credit cost.
             company_items = companies if is_industry_bulk else companies[:8]
-            label = f"Companies in {norm.industry_hints[0]}" if is_industry_bulk and norm.industry_hints else "Companies"
+            label = f"Companies in {', '.join(merged_industry_hints[:2])}" if is_industry_bulk and merged_industry_hints else "Companies"
             groups.append({
                 "kind": "companies",
                 "label": label,
@@ -601,7 +619,7 @@ class SearchService:
                 "intent": norm.intent,
                 "corrected": norm.corrected,
                 "company_hint": norm.company_hint,
-                "industry_hints": norm.industry_hints,
+                "industry_hints": merged_industry_hints,
                 "title_filters": norm.title_filters,
                 "llm_used": norm.llm_used,
             },

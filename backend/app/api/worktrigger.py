@@ -57,6 +57,7 @@ def universal_search(
     types: str = "all",
     limit: int = 20,
     apollo_page: int = 1,
+    industries: str = "",
 ) -> dict[str, Any]:
     """Universal search across local accounts, contacts, and vendors.
 
@@ -72,6 +73,7 @@ def universal_search(
         types=types,
         limit=max(1, min(50, limit)),
         apollo_page=max(1, min(10, apollo_page)),
+        industries=[x.strip() for x in industries.split(",") if x.strip()],
     )
 
 

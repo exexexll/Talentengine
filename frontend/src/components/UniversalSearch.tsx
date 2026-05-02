@@ -100,6 +100,7 @@ type Props = {
 export function UniversalSearch({ open, onClose, onOpenAccount, onIntakeComplete, flash }: Props) {
   const [query, setQuery] = React.useState("");
   const [typesFilter, setTypesFilter] = React.useState<IntentChip>("all");
+  const [selectedIndustries, setSelectedIndustries] = React.useState<string[]>([]);
   const [response, setResponse] = React.useState<SearchResponse | null>(null);
   const [loading, setLoading] = React.useState(false);
   const [recents, setRecents] = React.useState<string[]>(() => loadRecents());
@@ -123,6 +124,7 @@ export function UniversalSearch({ open, onClose, onOpenAccount, onIntakeComplete
       requestAnimationFrame(() => inputRef.current?.focus());
     } else {
       setQuery("");
+      setSelectedIndustries([]);
       setResponse(null);
       setLoading(false);
     }
@@ -131,7 +133,7 @@ export function UniversalSearch({ open, onClose, onOpenAccount, onIntakeComplete
   // Any change to query or intent filter resets us back to Apollo page 1.
   React.useEffect(() => {
     setApolloPage(1);
-  }, [query, typesFilter]);
+  }, [query, typesFilter, selectedIndustries.join("|")]);
 
   // Debounced search (350 ms).  Local-only stage fires on every keystroke;
   // vendor stage only fires after the debounce settles.
@@ -147,6 +149,7 @@ export function UniversalSearch({ open, onClose, onOpenAccount, onIntakeComplete
           types: typesFilter,
           limit: "20",
           apollo_page: String(apolloPage),
+          ...(selectedIndustries.length > 0 ? { industries: selectedIndustries.join(",") } : {}),
         });
         const res = await fetch(`/api/worktrigger/search?${qs}`);
         if (res.ok) {
@@ -179,7 +182,16 @@ export function UniversalSearch({ open, onClose, onOpenAccount, onIntakeComplete
     }, apolloPage > 1 ? 0 : 350);  // deep-page click is instant, debounced only for typing
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [query, typesFilter, open, apolloPage]);
+  }, [query, typesFilter, open, apolloPage, selectedIndustries.join("|")]);
+
+  // On a fresh query, auto-seed active industry filters from LLM hints.
+  React.useEffect(() => {
+    if (!response || !query.trim()) return;
+    if (apolloPage !== 1) return;
+    if (selectedIndustries.length > 0) return;
+    const hints = (response.normalized?.industry_hints || []).slice(0, 4);
+    if (hints.length > 0) setSelectedIndustries(hints);
+  }, [response, query, apolloPage, selectedIndustries.length]);
 
   const PAGE_SIZE = 8;
 
@@ -405,6 +417,30 @@ export function UniversalSearch({ open, onClose, onOpenAccount, onIntakeComplete
             </span>
           ) : null}
         </div>
+        {response?.normalized?.industry_hints?.length ? (
+          <div className="us-chips" style={{ paddingTop: 0 }}>
+            <span className="us-meta" style={{ marginRight: 6 }}>Industry filters:</span>
+            {response.normalized.industry_hints.slice(0, 8).map((hint) => {
+              const active = selectedIndustries.includes(hint);
+              return (
+                <button
+                  key={hint}
+                  className={`us-chip ${active ? "us-chip-active" : ""}`}
+                  onClick={() => {
+                    setSelectedIndustries((prev) => (
+                      prev.includes(hint) ? prev.filter((x) => x !== hint) : [...prev, hint]
+                    ));
+                    setApolloPage(1);
+                    setGroupPage({});
+                    setActiveIdx(0);
+                  }}
+                >
+                  {hint}
+                </button>
+              );
+            })}
+          </div>
+        ) : null}
 
         {/* Results */}
         <div className="us-list" ref={listRef}>
