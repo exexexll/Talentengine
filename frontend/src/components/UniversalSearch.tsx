@@ -101,6 +101,7 @@ export function UniversalSearch({ open, onClose, onOpenAccount, onIntakeComplete
   const [query, setQuery] = React.useState("");
   const [typesFilter, setTypesFilter] = React.useState<IntentChip>("all");
   const [selectedIndustries, setSelectedIndustries] = React.useState<string[]>([]);
+  const [selectedCompanyKeys, setSelectedCompanyKeys] = React.useState<Set<string>>(new Set());
   const [response, setResponse] = React.useState<SearchResponse | null>(null);
   const [loading, setLoading] = React.useState(false);
   const [recents, setRecents] = React.useState<string[]>(() => loadRecents());
@@ -125,6 +126,7 @@ export function UniversalSearch({ open, onClose, onOpenAccount, onIntakeComplete
     } else {
       setQuery("");
       setSelectedIndustries([]);
+      setSelectedCompanyKeys(new Set());
       setResponse(null);
       setLoading(false);
     }
@@ -134,6 +136,10 @@ export function UniversalSearch({ open, onClose, onOpenAccount, onIntakeComplete
   React.useEffect(() => {
     setApolloPage(1);
   }, [query, typesFilter, selectedIndustries.join("|")]);
+
+  React.useEffect(() => {
+    setSelectedCompanyKeys(new Set());
+  }, [query, typesFilter, selectedIndustries.join("|"), apolloPage]);
 
   // Debounced search (350 ms).  Local-only stage fires on every keystroke;
   // vendor stage only fires after the debounce settles.
@@ -238,6 +244,70 @@ export function UniversalSearch({ open, onClose, onOpenAccount, onIntakeComplete
     active?.scrollIntoView({ block: "nearest", behavior: "smooth" });
   }, [activeIdx]);
 
+  const intakeCompany = React.useCallback(async (
+    item: CompanyHit,
+    opts: { openAccount?: boolean; closeModal?: boolean } = {},
+  ): Promise<boolean> => {
+    const openAccount = opts.openAccount ?? true;
+    const closeModal = opts.closeModal ?? true;
+    if (!item.domain && !item.name) return false;
+    const key = (item.domain || item.name).toLowerCase();
+    if (intakeInFlight.current.has(key)) return false;
+    if (intakeDone.has(key)) {
+      flash(`${item.name} is already in the pipeline`);
+      return true;
+    }
+    intakeInFlight.current.add(key);
+    setIntakeBusy(prev => new Set(prev).add(key));
+    try {
+      const qs = new URLSearchParams({
+        domain: item.domain || "",
+        company_name: item.name || "",
+      });
+      const res = await fetch(`/api/worktrigger/vendors/companies/intake?${qs}`, { method: "POST" });
+      if (res.ok) {
+        const data = await res.json() as { account_id?: string; deduped?: boolean };
+        setIntakeDone(prev => new Set(prev).add(key));
+        flash(data.deduped ? `${item.name} already in the pipeline` : `Added ${item.name} to the pipeline`);
+        onIntakeComplete?.();
+        if (openAccount && data.account_id) {
+          onOpenAccount(data.account_id);
+          if (closeModal) onClose();
+        }
+        return true;
+      }
+      flash(`Intake failed: ${await res.text()}`);
+      return false;
+    } catch (e) {
+      flash(`Intake error: ${e instanceof Error ? e.message : "network"}`);
+      return false;
+    } finally {
+      intakeInFlight.current.delete(key);
+      setIntakeBusy(prev => { const n = new Set(prev); n.delete(key); return n; });
+    }
+  }, [flash, intakeDone, onClose, onIntakeComplete, onOpenAccount]);
+
+  const batchAddSelectedCompanies = React.useCallback(async () => {
+    if (!response || selectedCompanyKeys.size === 0) return;
+    const selectedCompanies: CompanyHit[] = [];
+    for (const g of response.groups) {
+      if (g.kind !== "companies") continue;
+      for (const item of g.items) {
+        if (item.kind !== "company") continue;
+        const key = (item.domain || item.name).toLowerCase();
+        if (selectedCompanyKeys.has(key)) selectedCompanies.push(item);
+      }
+    }
+    if (!selectedCompanies.length) return;
+    let added = 0;
+    for (const c of selectedCompanies) {
+      const ok = await intakeCompany(c, { openAccount: false, closeModal: false });
+      if (ok) added += 1;
+    }
+    flash(`Processed ${added}/${selectedCompanies.length} selected companies`);
+    setSelectedCompanyKeys(new Set());
+  }, [response, selectedCompanyKeys, intakeCompany, flash]);
+
   const doAction = React.useCallback(async (item: SearchItem, opts: { secondary?: boolean } = {}) => {
     saveRecent(query);
     setRecents(loadRecents());
@@ -256,43 +326,7 @@ export function UniversalSearch({ open, onClose, onOpenAccount, onIntakeComplete
         window.open(`https://${item.domain}`, "_blank", "noopener");
         return;
       }
-      if (!item.domain && !item.name) return;
-      const key = (item.domain || item.name).toLowerCase();
-
-      // Hard-block parallel re-fires.  The ref check is synchronous, so
-      // even if React batches a burst of click events into the same tick
-      // they'll all see the same guarded ref and only one request fires.
-      if (intakeInFlight.current.has(key)) return;
-      if (intakeDone.has(key)) {
-        flash(`${item.name} is already in the pipeline`);
-        return;
-      }
-      intakeInFlight.current.add(key);
-      setIntakeBusy(prev => new Set(prev).add(key));
-      try {
-        const qs = new URLSearchParams({
-          domain: item.domain || "",
-          company_name: item.name || "",
-        });
-        const res = await fetch(`/api/worktrigger/vendors/companies/intake?${qs}`, { method: "POST" });
-        if (res.ok) {
-          const data = await res.json() as { account_id?: string; deduped?: boolean };
-          setIntakeDone(prev => new Set(prev).add(key));
-          flash(data.deduped ? `${item.name} already in the pipeline` : `Added ${item.name} to the pipeline`);
-          onIntakeComplete?.();
-          if (data.account_id) {
-            onOpenAccount(data.account_id);
-            onClose();
-          }
-        } else {
-          flash(`Intake failed: ${await res.text()}`);
-        }
-      } catch (e) {
-        flash(`Intake error: ${e instanceof Error ? e.message : "network"}`);
-      } finally {
-        intakeInFlight.current.delete(key);
-        setIntakeBusy(prev => { const n = new Set(prev); n.delete(key); return n; });
-      }
+      await intakeCompany(item, { openAccount: true, closeModal: true });
       return;
     }
     if (item.kind === "person") {
@@ -340,7 +374,7 @@ export function UniversalSearch({ open, onClose, onOpenAccount, onIntakeComplete
         setIntakeBusy(prev => { const n = new Set(prev); n.delete(key); return n; });
       }
     }
-  }, [query, onOpenAccount, onClose, onIntakeComplete, flash, intakeDone]);
+  }, [query, onOpenAccount, onClose, onIntakeComplete, flash, intakeDone, intakeCompany]);
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
     if (e.key === "Escape") { e.preventDefault(); onClose(); return; }
@@ -483,6 +517,9 @@ export function UniversalSearch({ open, onClose, onOpenAccount, onIntakeComplete
             // up on the first page, or for every row on subsequent pages.
             const richBudget = group.rich_count ?? Infinity;
             const isFirstPage = slice.page === 0;
+            const companyItemsOnPage = slice.items.filter((it): it is CompanyHit => it.kind === "company");
+            const selectedOnPage = companyItemsOnPage.filter((it) => selectedCompanyKeys.has((it.domain || it.name).toLowerCase())).length;
+            const allOnPageSelected = companyItemsOnPage.length > 0 && selectedOnPage === companyItemsOnPage.length;
             return (
               <div key={group.kind} className="us-group">
                 <div className="us-group-label">
@@ -493,11 +530,64 @@ export function UniversalSearch({ open, onClose, onOpenAccount, onIntakeComplete
                       : `(${group.items.length})`}
                   </span>
                 </div>
+                {group.kind === "companies" && companyItemsOnPage.length > 0 ? (
+                  <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8, fontSize: 11 }}>
+                    <button
+                      className="us-chip"
+                      onClick={() => {
+                        setSelectedCompanyKeys((prev) => {
+                          const next = new Set(prev);
+                          if (allOnPageSelected) {
+                            for (const c of companyItemsOnPage) next.delete((c.domain || c.name).toLowerCase());
+                          } else {
+                            for (const c of companyItemsOnPage) next.add((c.domain || c.name).toLowerCase());
+                          }
+                          return next;
+                        });
+                      }}
+                    >
+                      {allOnPageSelected ? "Unselect page" : "Select page"}
+                    </button>
+                    <span className="us-meta">{selectedCompanyKeys.size} selected</span>
+                    <button
+                      className="us-chip us-chip-active"
+                      disabled={selectedCompanyKeys.size === 0}
+                      onClick={() => void batchAddSelectedCompanies()}
+                    >
+                      + Add selected
+                    </button>
+                  </div>
+                ) : null}
                 {slice.items.map((item, groupLocalIdx) => {
                   const globalIndexInGroup = slice.page * PAGE_SIZE + groupLocalIdx;
                   const compact = !isFirstPage || globalIndexInGroup >= richBudget;
                   const flatIdx = flatItems.findIndex(f => f.item === item);
                   const isActive = flatIdx === activeIdx;
+                  if (item.kind === "company") {
+                    const companyKey = (item.domain || item.name).toLowerCase();
+                    const selected = selectedCompanyKeys.has(companyKey);
+                    return (
+                      <CompanySearchRow
+                        key={`${group.kind}-${globalIndexInGroup}`}
+                        item={item}
+                        compact={compact}
+                        flatIdx={flatIdx}
+                        isActive={isActive}
+                        busy={isBusy(item, intakeBusy)}
+                        done={isDone(item, intakeDone)}
+                        selected={selected}
+                        onMouseEnter={() => setActiveIdx(flatIdx)}
+                        onToggleSelect={() => {
+                          setSelectedCompanyKeys((prev) => {
+                            const next = new Set(prev);
+                            if (next.has(companyKey)) next.delete(companyKey); else next.add(companyKey);
+                            return next;
+                          });
+                        }}
+                        onAction={() => void doAction(item)}
+                      />
+                    );
+                  }
                   return (
                     <div
                       key={`${group.kind}-${globalIndexInGroup}`}
@@ -599,6 +689,154 @@ export function UniversalSearch({ open, onClose, onOpenAccount, onIntakeComplete
           <span>Figwork universal search</span>
         </div>
       </div>
+    </div>
+  );
+}
+
+type ContactBadgeInfo = {
+  found: boolean;
+  total: number;
+  departments: Record<string, number>;
+  pattern: string;
+} | null;
+
+function EmailIndicator({ domain, employeeFallback }: { domain: string; employeeFallback: number | null }) {
+  const [count, setCount] = React.useState<ContactBadgeInfo>(null);
+  const [loading, setLoading] = React.useState(false);
+  React.useEffect(() => {
+    if (!domain) return;
+    let cancelled = false;
+    setLoading(true);
+    fetch(`/api/worktrigger/vendors/companies/contacts-count?domain=${encodeURIComponent(domain)}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => { if (!cancelled) setCount(data as ContactBadgeInfo); })
+      .catch(() => {})
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [domain]);
+
+  if (loading) return <span className="us-pill" style={{ marginLeft: 6 }}>✉ …</span>;
+  if (count?.found && count.total > 0) {
+    return <span className="us-pill us-pill-info" style={{ marginLeft: 6 }}>✉ {count.total}</span>;
+  }
+  if ((!count || !count.found) && Number(employeeFallback || 0) > 0) {
+    return <span className="us-pill" style={{ marginLeft: 6 }}>~{Number(employeeFallback).toLocaleString()} emp</span>;
+  }
+  return null;
+}
+
+function CompanySearchRow({
+  item,
+  compact,
+  flatIdx,
+  isActive,
+  busy,
+  done,
+  selected,
+  onMouseEnter,
+  onToggleSelect,
+  onAction,
+}: {
+  item: CompanyHit;
+  compact: boolean;
+  flatIdx: number;
+  isActive: boolean;
+  busy: boolean;
+  done: boolean;
+  selected: boolean;
+  onMouseEnter: () => void;
+  onToggleSelect: () => void;
+  onAction: () => void;
+}) {
+  const [hover, setHover] = React.useState(false);
+  const [enriched, setEnriched] = React.useState<Record<string, unknown> | null>(null);
+  const [loading, setLoading] = React.useState(false);
+
+  React.useEffect(() => {
+    if (!hover || enriched || loading || !item.domain) return;
+    let cancelled = false;
+    setLoading(true);
+    fetch(`/api/worktrigger/vendors/companies/enrich?domain=${encodeURIComponent(item.domain)}`, { method: "POST" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => { if (!cancelled && data?.found) setEnriched(data as Record<string, unknown>); })
+      .catch(() => {})
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [hover, enriched, loading, item.domain]);
+
+  return (
+    <div
+      className={`us-item us-item-company ${compact ? "us-item-compact" : ""} ${isActive ? "us-item-active" : ""} ${busy ? "us-item-busy" : ""}`}
+      data-idx={flatIdx}
+      onMouseEnter={() => { onMouseEnter(); setHover(true); }}
+      onMouseLeave={() => setHover(false)}
+      onClick={(e) => { e.stopPropagation(); if (!busy) onAction(); }}
+      style={{ position: "relative" }}
+    >
+      <input
+        type="checkbox"
+        checked={selected}
+        onChange={onToggleSelect}
+        onClick={(e) => e.stopPropagation()}
+        title="Select company"
+        style={{ marginRight: 8 }}
+      />
+      {compact ? (
+        <>
+          <div className="us-compact-bullet" aria-hidden>{flatIdx + 1}</div>
+          <div className="us-item-body">
+            <div className="us-compact-line">
+              <span className="us-compact-name">
+                {item.name}
+                <EmailIndicator domain={item.domain} employeeFallback={item.employee_count} />
+              </span>
+              <span className="us-compact-meta"><CompactMeta item={item} /></span>
+            </div>
+          </div>
+          <ActionLabel item={item} busy={busy} done={done} />
+        </>
+      ) : (
+        <>
+          <ResultIcon item={item} />
+          <div className="us-item-body">
+            <div className="us-item-title">
+              {item.name}
+              <EmailIndicator domain={item.domain} employeeFallback={item.employee_count} />
+            </div>
+            <div className="us-item-sub"><MetaLine item={item} /></div>
+          </div>
+          <ActionLabel item={item} busy={busy} done={done} />
+        </>
+      )}
+      {hover ? (
+        <div style={{
+          position: "absolute",
+          right: 8,
+          top: "100%",
+          zIndex: 50,
+          width: 280,
+          background: "#fff",
+          border: "1px solid #dbe3e8",
+          borderRadius: 8,
+          padding: 10,
+          boxShadow: "0 10px 28px rgba(0,0,0,0.14)",
+          marginTop: 4,
+        }}>
+          <div style={{ fontWeight: 700, fontSize: 12, marginBottom: 4 }}>{item.name}</div>
+          {loading ? <div style={{ fontSize: 11, color: "#6b7280" }}>Loading enrichment…</div> : null}
+          {enriched ? (
+            <div style={{ display: "grid", gap: 3, fontSize: 11 }}>
+              {enriched.industry ? <div>Industry: {String(enriched.industry)}</div> : null}
+              {enriched.employee_count ? <div>Employees: {Number(enriched.employee_count).toLocaleString()}</div> : null}
+              {enriched.funding_stage ? <div>Funding: {String(enriched.funding_stage)}</div> : null}
+              {enriched.short_description ? <div style={{ color: "#4b5563" }}>{String(enriched.short_description).slice(0, 180)}</div> : null}
+            </div>
+          ) : item.short_description ? (
+            <div style={{ fontSize: 11, color: "#4b5563" }}>{item.short_description}</div>
+          ) : null}
+          {item.domain ? <div style={{ marginTop: 4, fontSize: 10, color: "#2563eb" }}>{item.domain}</div> : null}
+        </div>
+      ) : null}
     </div>
   );
 }
