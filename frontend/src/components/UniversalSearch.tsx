@@ -9,6 +9,7 @@
  *   person         → intake parent company + add contact row
  */
 import React from "react";
+import { createPortal } from "react-dom";
 
 type SearchMeta = {
   effective: string;
@@ -748,9 +749,27 @@ function CompanySearchRow({
   onToggleSelect: () => void;
   onAction: () => void;
 }) {
+  const TOOLTIP_WIDTH = 280;
+  const TOOLTIP_GAP = 10;
   const [hover, setHover] = React.useState(false);
   const [enriched, setEnriched] = React.useState<Record<string, unknown> | null>(null);
   const [loading, setLoading] = React.useState(false);
+  const [anchor, setAnchor] = React.useState<{ top: number; left: number } | null>(null);
+  const rowRef = React.useRef<HTMLDivElement>(null);
+
+  const computeAnchor = React.useCallback(() => {
+    const el = rowRef.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    const vw = window.innerWidth;
+    const spaceRight = vw - rect.right;
+    const placeRight = spaceRight >= TOOLTIP_WIDTH + TOOLTIP_GAP + 12;
+    const left = placeRight
+      ? Math.min(rect.right + TOOLTIP_GAP, vw - TOOLTIP_WIDTH - 8)
+      : Math.max(8, rect.left - TOOLTIP_WIDTH - TOOLTIP_GAP);
+    const top = Math.max(8, Math.min(rect.top, window.innerHeight - 120));
+    setAnchor({ top, left });
+  }, [TOOLTIP_GAP, TOOLTIP_WIDTH]);
 
   React.useEffect(() => {
     if (!hover || enriched || loading || !item.domain) return;
@@ -764,14 +783,26 @@ function CompanySearchRow({
     return () => { cancelled = true; };
   }, [hover, enriched, loading, item.domain]);
 
+  React.useEffect(() => {
+    if (!hover) return;
+    computeAnchor();
+    const onMove = () => computeAnchor();
+    window.addEventListener("scroll", onMove, true);
+    window.addEventListener("resize", onMove);
+    return () => {
+      window.removeEventListener("scroll", onMove, true);
+      window.removeEventListener("resize", onMove);
+    };
+  }, [hover, computeAnchor]);
+
   return (
     <div
+      ref={rowRef}
       className={`us-item us-item-company ${compact ? "us-item-compact" : ""} ${isActive ? "us-item-active" : ""} ${busy ? "us-item-busy" : ""}`}
       data-idx={flatIdx}
-      onMouseEnter={() => { onMouseEnter(); setHover(true); }}
+      onMouseEnter={() => { onMouseEnter(); computeAnchor(); setHover(true); }}
       onMouseLeave={() => setHover(false)}
       onClick={(e) => { e.stopPropagation(); if (!busy) onAction(); }}
-      style={{ position: "relative" }}
     >
       <input
         type="checkbox"
@@ -808,19 +839,19 @@ function CompanySearchRow({
           <ActionLabel item={item} busy={busy} done={done} />
         </>
       )}
-      {hover ? (
+      {hover && anchor ? createPortal(
         <div style={{
-          position: "absolute",
-          right: 8,
-          top: "100%",
-          zIndex: 50,
-          width: 280,
+          position: "fixed",
+          top: anchor.top,
+          left: anchor.left,
+          zIndex: 10050,
+          width: TOOLTIP_WIDTH,
           background: "#fff",
           border: "1px solid #dbe3e8",
           borderRadius: 8,
           padding: 10,
           boxShadow: "0 10px 28px rgba(0,0,0,0.14)",
-          marginTop: 4,
+          pointerEvents: "none",
         }}>
           <div style={{ fontWeight: 700, fontSize: 12, marginBottom: 4 }}>{item.name}</div>
           {loading ? <div style={{ fontSize: 11, color: "#6b7280" }}>Loading enrichment…</div> : null}
@@ -835,7 +866,8 @@ function CompanySearchRow({
             <div style={{ fontSize: 11, color: "#4b5563" }}>{item.short_description}</div>
           ) : null}
           {item.domain ? <div style={{ marginTop: 4, fontSize: 10, color: "#2563eb" }}>{item.domain}</div> : null}
-        </div>
+        </div>,
+        document.body,
       ) : null}
     </div>
   );
