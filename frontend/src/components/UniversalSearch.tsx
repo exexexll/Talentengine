@@ -46,6 +46,7 @@ type PersonHit = {
   company_name: string; company_domain: string; source: string;
 };
 type SearchItem = LocalAccount | LocalContact | CompanyHit | PersonHit;
+type CompanyLikeItem = CompanyHit | LocalAccount;
 type SearchGroup = {
   kind: string;
   label: string;
@@ -246,16 +247,17 @@ export function UniversalSearch({ open, onClose, onOpenAccount, onIntakeComplete
   }, [activeIdx]);
 
   const intakeCompany = React.useCallback(async (
-    item: CompanyHit,
-    opts: { openAccount?: boolean; closeModal?: boolean } = {},
+    item: CompanyLikeItem,
+    opts: { openAccount?: boolean; closeModal?: boolean; silent?: boolean } = {},
   ): Promise<boolean> => {
     const openAccount = opts.openAccount ?? true;
     const closeModal = opts.closeModal ?? true;
+    const silent = opts.silent ?? false;
     if (!item.domain && !item.name) return false;
     const key = (item.domain || item.name).toLowerCase();
     if (intakeInFlight.current.has(key)) return false;
     if (intakeDone.has(key)) {
-      flash(`${item.name} is already in the pipeline`);
+      if (!silent) flash(`${item.name} is already in the pipeline`);
       return true;
     }
     intakeInFlight.current.add(key);
@@ -269,7 +271,7 @@ export function UniversalSearch({ open, onClose, onOpenAccount, onIntakeComplete
       if (res.ok) {
         const data = await res.json() as { account_id?: string; deduped?: boolean };
         setIntakeDone(prev => new Set(prev).add(key));
-        flash(data.deduped ? `${item.name} already in the pipeline` : `Added ${item.name} to the pipeline`);
+        if (!silent) flash(data.deduped ? `${item.name} already in the pipeline` : `Added ${item.name} to the pipeline`);
         onIntakeComplete?.();
         if (openAccount && data.account_id) {
           onOpenAccount(data.account_id);
@@ -277,10 +279,10 @@ export function UniversalSearch({ open, onClose, onOpenAccount, onIntakeComplete
         }
         return true;
       }
-      flash(`Intake failed: ${await res.text()}`);
+      if (!silent) flash(`Intake failed: ${await res.text()}`);
       return false;
     } catch (e) {
-      flash(`Intake error: ${e instanceof Error ? e.message : "network"}`);
+      if (!silent) flash(`Intake error: ${e instanceof Error ? e.message : "network"}`);
       return false;
     } finally {
       intakeInFlight.current.delete(key);
@@ -290,11 +292,10 @@ export function UniversalSearch({ open, onClose, onOpenAccount, onIntakeComplete
 
   const batchAddSelectedCompanies = React.useCallback(async () => {
     if (!response || selectedCompanyKeys.size === 0) return;
-    const selectedCompanies: CompanyHit[] = [];
+    const selectedCompanies: CompanyLikeItem[] = [];
     for (const g of response.groups) {
-      if (g.kind !== "companies") continue;
       for (const item of g.items) {
-        if (item.kind !== "company") continue;
+        if (item.kind !== "company" && item.kind !== "local_account") continue;
         const key = (item.domain || item.name).toLowerCase();
         if (selectedCompanyKeys.has(key)) selectedCompanies.push(item);
       }
@@ -302,7 +303,7 @@ export function UniversalSearch({ open, onClose, onOpenAccount, onIntakeComplete
     if (!selectedCompanies.length) return;
     let added = 0;
     for (const c of selectedCompanies) {
-      const ok = await intakeCompany(c, { openAccount: false, closeModal: false });
+      const ok = await intakeCompany(c, { openAccount: false, closeModal: false, silent: true });
       if (ok) added += 1;
     }
     flash(`Processed ${added}/${selectedCompanies.length} selected companies`);
@@ -518,7 +519,9 @@ export function UniversalSearch({ open, onClose, onOpenAccount, onIntakeComplete
             // up on the first page, or for every row on subsequent pages.
             const richBudget = group.rich_count ?? Infinity;
             const isFirstPage = slice.page === 0;
-            const companyItemsOnPage = slice.items.filter((it): it is CompanyHit => it.kind === "company");
+            const companyItemsOnPage = slice.items.filter(
+              (it): it is CompanyLikeItem => it.kind === "company" || it.kind === "local_account",
+            );
             const selectedOnPage = companyItemsOnPage.filter((it) => selectedCompanyKeys.has((it.domain || it.name).toLowerCase())).length;
             const allOnPageSelected = companyItemsOnPage.length > 0 && selectedOnPage === companyItemsOnPage.length;
             return (
@@ -531,7 +534,7 @@ export function UniversalSearch({ open, onClose, onOpenAccount, onIntakeComplete
                       : `(${group.items.length})`}
                   </span>
                 </div>
-                {group.kind === "companies" && companyItemsOnPage.length > 0 ? (
+                {(group.kind === "companies" || group.kind === "local_accounts") && companyItemsOnPage.length > 0 ? (
                   <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8, fontSize: 11 }}>
                     <button
                       className="us-chip"
@@ -564,7 +567,7 @@ export function UniversalSearch({ open, onClose, onOpenAccount, onIntakeComplete
                   const compact = !isFirstPage || globalIndexInGroup >= richBudget;
                   const flatIdx = flatItems.findIndex(f => f.item === item);
                   const isActive = flatIdx === activeIdx;
-                  if (item.kind === "company") {
+                  if (item.kind === "company" || item.kind === "local_account") {
                     const companyKey = (item.domain || item.name).toLowerCase();
                     const selected = selectedCompanyKeys.has(companyKey);
                     return (
@@ -574,9 +577,10 @@ export function UniversalSearch({ open, onClose, onOpenAccount, onIntakeComplete
                         compact={compact}
                         flatIdx={flatIdx}
                         isActive={isActive}
-                        busy={isBusy(item, intakeBusy)}
-                        done={isDone(item, intakeDone)}
+                        busy={item.kind === "company" ? isBusy(item, intakeBusy) : false}
+                        done={item.kind === "company" ? isDone(item, intakeDone) : false}
                         selected={selected}
+                        selectable
                         onMouseEnter={() => setActiveIdx(flatIdx)}
                         onToggleSelect={() => {
                           setSelectedCompanyKeys((prev) => {
@@ -606,7 +610,7 @@ export function UniversalSearch({ open, onClose, onOpenAccount, onIntakeComplete
                           <div className="us-item-body">
                             <div className="us-compact-line">
                               <span className="us-compact-name">
-                                {item.kind === "person" ? item.full_name : item.kind === "local_contact" ? item.full_name : item.name}
+                                {item.full_name}
                               </span>
                               <span className="us-compact-meta"><CompactMeta item={item} /></span>
                             </div>
@@ -618,13 +622,7 @@ export function UniversalSearch({ open, onClose, onOpenAccount, onIntakeComplete
                           <ResultIcon item={item} />
                           <div className="us-item-body">
                             <div className="us-item-title">
-                              {item.kind === "person" ? item.full_name : item.kind === "local_contact" ? item.full_name : item.name}
-                              {item.kind === "local_account" && item.draft_count > 0 ? (
-                                <span className="us-pill us-pill-info">{item.draft_count} draft{item.draft_count === 1 ? "" : "s"}</span>
-                              ) : null}
-                              {item.kind === "local_account" && item.signal_score >= 50 ? (
-                                <span className="us-pill us-pill-hot">signal {Math.round(item.signal_score)}</span>
-                              ) : null}
+                              {item.full_name}
                             </div>
                             <div className="us-item-sub"><MetaLine item={item} /></div>
                           </div>
@@ -734,17 +732,19 @@ function CompanySearchRow({
   busy,
   done,
   selected,
+  selectable,
   onMouseEnter,
   onToggleSelect,
   onAction,
 }: {
-  item: CompanyHit;
+  item: CompanyLikeItem;
   compact: boolean;
   flatIdx: number;
   isActive: boolean;
   busy: boolean;
   done: boolean;
   selected: boolean;
+  selectable: boolean;
   onMouseEnter: () => void;
   onToggleSelect: () => void;
   onAction: () => void;
@@ -783,6 +783,8 @@ function CompanySearchRow({
     return () => { cancelled = true; };
   }, [hover, enriched, loading, item.domain]);
 
+  const shortDescription = "short_description" in item ? String(item.short_description || "") : "";
+
   React.useEffect(() => {
     if (!hover) return;
     computeAnchor();
@@ -804,14 +806,18 @@ function CompanySearchRow({
       onMouseLeave={() => setHover(false)}
       onClick={(e) => { e.stopPropagation(); if (!busy) onAction(); }}
     >
-      <input
-        type="checkbox"
-        checked={selected}
-        onChange={onToggleSelect}
-        onClick={(e) => e.stopPropagation()}
-        title="Select company"
-        style={{ marginRight: 8 }}
-      />
+      {selectable ? (
+        <input
+          type="checkbox"
+          checked={selected}
+          onChange={onToggleSelect}
+          onClick={(e) => e.stopPropagation()}
+          title="Select company"
+          style={{ marginRight: 8 }}
+        />
+      ) : (
+        <span style={{ width: 18, display: "inline-block", marginRight: 8 }} />
+      )}
       {compact ? (
         <>
           <div className="us-compact-bullet" aria-hidden>{flatIdx + 1}</div>
@@ -862,8 +868,8 @@ function CompanySearchRow({
               {enriched.funding_stage ? <div>Funding: {String(enriched.funding_stage)}</div> : null}
               {enriched.short_description ? <div style={{ color: "#4b5563" }}>{String(enriched.short_description).slice(0, 180)}</div> : null}
             </div>
-          ) : item.short_description ? (
-            <div style={{ fontSize: 11, color: "#4b5563" }}>{item.short_description}</div>
+          ) : shortDescription ? (
+            <div style={{ fontSize: 11, color: "#4b5563" }}>{shortDescription}</div>
           ) : null}
           {item.domain ? <div style={{ marginTop: 4, fontSize: 10, color: "#2563eb" }}>{item.domain}</div> : null}
         </div>,
